@@ -41,6 +41,7 @@ Instalarlo en el cliente es opcional.
 | Teclas de sistema (Win, Alt+Tab, Ctrl+Esc…) | Botón **Teclas Win** (activo por defecto). `Ctrl+Alt+Inicio` libera el teclado. |
 | Texto perfectamente nítido para programar | **Texto nítido** (color 4:4:4 sin submuestreo; NVENC o x264). |
 | Píxel exacto / ajustar a ventana | **Ajustar** ↔ **1:1** |
+| Pantalla de lado (consolas portátiles, monitores girados) | El host corrige solo las pantallas giradas en Windows (p. ej. OneXPlayer, ROG Ally, Legion Go, cuyo panel es vertical de fábrica). Si aun así se ve girada, botón **⟳** → *90° a la derecha / 180° / 90° a la izquierda*; se recuerda por equipo y el ratón sigue la imagen girada. |
 | Calidad y fluidez | Selectores de Mbps (5–200) y fps (30–144). Con **Auto** (por defecto) los Mbps son el techo y el host ajusta el bitrate a lo que la red entrega de verdad; desactívalo para un bitrate fijo. |
 | Códec | **Auto** (H.264 en la LAN; AV1 o HEVC por Internet si ambos equipos los codifican/decodifican por hardware), o fíjalo a H.264 / HEVC / AV1. |
 | Varios monitores | Selector de monitor. |
