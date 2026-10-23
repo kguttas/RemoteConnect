@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+    <Version>2.0.0</Version>
+    <!-- Release publish = one exe: native FFmpeg extracted on first run, everything compressed. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <Product>RemoteConnect</Product>
+    <!-- WPF0001: Fluent ThemeMode is still flagged experimental.
+         WFO0003: WinForms (tray icon only) prefers its own DPI API; WPF needs the manifest. -->
+    <NoWarn>$(NoWarn);WPF0001;WFO0003;CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Resource Include="Assets\app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FFmpeg.AutoGen" Version="7.0.0" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="Sdcb.FFmpeg.runtime.windows-x64" Version="7.0.0" />
+    <PackageReference Include="System.IO.Hashing" Version="10.0.0" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.0" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+  </ItemGroup>
+
+  <!-- The runtime pack marks msquic.dll DropFromSingleFile, which leaves a single-file app without QUIC
+       (QuicListener.IsSupported == false). Bundle it like the other natives; P2p preloads it. -->
+  <Target Name="BundleMsQuic" AfterTargets="ComputeResolvedFilesToPublishList" Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <_MsQuicToBundle Include="@(_FilesToDrop)" Condition="'%(Filename)%(Extension)' == 'msquic.dll'" />
+      <ResolvedFileToPublish Include="@(_MsQuicToBundle)" DropFromSingleFile="false" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Only avcodec/avutil/swscale/swresample are used; drop the rest of the FFmpeg runtime (~50 MB). -->
+  <Target Name="TrimFFmpeg" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)" Condition="'%(Filename)' == 'avfilter-10' Or '%(Filename)' == 'avdevice-61' Or '%(Filename)' == 'avformat-61' Or '%(Filename)' == 'postproc-58'" />
+      <RuntimeTargetsCopyLocalItems Remove="@(RuntimeTargetsCopyLocalItems)" Condition="'%(Filename)' == 'avfilter-10' Or '%(Filename)' == 'avdevice-61' Or '%(Filename)' == 'avformat-61' Or '%(Filename)' == 'postproc-58'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

@@ -1,0 +1,111 @@
+<Window x:Class="RemoteConnect.UI.RemoteWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:client="clr-namespace:RemoteConnect.Client"
+        Title="RemoteConnect" Width="1280" Height="800" MinWidth="640" MinHeight="400"
+        WindowStartupLocation="CenterScreen" Background="#0B0D10" AllowDrop="True"
+        Icon="/Assets/app.ico">
+    <Window.Resources>
+        <Style x:Key="Bar" TargetType="Control">
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="Padding" Value="10,3" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="Padding" Value="10,3" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+        <Style TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="MinHeight" Value="28" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="8,2" />
+            <Setter Property="Focusable" Value="False" />
+        </Style>
+    </Window.Resources>
+
+    <Grid x:Name="RootGrid">
+        <!-- Native child window: the decode thread presents straight into it (Direct3D flip model). WPF content
+             cannot draw over it, so overlays hide it and notices use a popup. -->
+        <Grid x:Name="ScreenArea" Background="#0B0D10" Focusable="True" FocusVisualStyle="{x:Null}" Margin="0,40,0,0">
+            <client:VideoHost x:Name="Video" />
+        </Grid>
+
+        <!-- Toolbar -->
+        <Border x:Name="Toolbar" VerticalAlignment="Top" Height="40" Background="#E6181B20" BorderBrush="#2A2F37" BorderThickness="0,0,0,1">
+            <DockPanel Margin="6,0" LastChildFill="False">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                    <TextBlock x:Name="Stats" Foreground="#9AA4B2" FontFamily="Cascadia Mono, Consolas" FontSize="11" VerticalAlignment="Center" Margin="8,0" />
+                    <Button x:Name="FullButton" Content="&#xE740;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" ToolTip="Pantalla completa (Ctrl+Alt+Intro)" Click="OnFullScreen" />
+                    <Button Content="Desconectar" Click="OnDisconnect" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                    <ComboBox x:Name="MonitorBox" Width="200" ToolTip="Monitor del equipo remoto" SelectionChanged="OnMonitorChanged" />
+                    <ComboBox x:Name="BitrateBox" Width="105" ToolTip="Calidad (tasa de bits; con «Auto», el máximo). En red local, 30–80 Mbps" SelectionChanged="OnStreamOptionChanged" />
+                    <ToggleButton x:Name="AdaptiveToggle" Content="Auto" ToolTip="Ajustar la tasa de bits a lo que la conexión aguanta (sin retrasos acumulados)" Click="OnStreamOptionChanged" />
+                    <ComboBox x:Name="FpsBox" Width="90" ToolTip="Fotogramas por segundo máximos" SelectionChanged="OnStreamOptionChanged" />
+                    <ComboBox x:Name="CodecBox" Width="92" ToolTip="Códec de vídeo. Auto: AV1 o HEVC si ambas GPU los soportan (menos ancho de banda), si no H.264" SelectionChanged="OnStreamOptionChanged">
+                        <ComboBoxItem Content="Auto" Tag="auto" />
+                        <ComboBoxItem Content="H.264" Tag="h264" />
+                        <ComboBoxItem Content="HEVC" Tag="hevc" />
+                        <ComboBoxItem Content="AV1" Tag="av1" />
+                    </ComboBox>
+                    <ToggleButton x:Name="Chroma444" Content="Texto nítido" ToolTip="Color 4:4:4 sin submuestreo: texto y código perfectamente nítidos (NVENC o x264)" Click="OnStreamOptionChanged" />
+                    <ToggleButton x:Name="FitToggle" Content="Ajustar" ToolTip="Ajustar a la ventana / tamaño real 1:1 píxel" Click="OnFitChanged" />
+                    <ToggleButton x:Name="AudioToggle" Content="Audio" ToolTip="Recibir el sonido del equipo remoto" Click="OnStreamOptionChanged" />
+                    <ToggleButton x:Name="KeysToggle" Content="Teclas Win" ToolTip="Enviar Win, Alt+Tab, Ctrl+Esc… al equipo remoto. Ctrl+Alt+Inicio libera el teclado." Click="OnKeysChanged" />
+                    <Button x:Name="ActionsButton" Content="Acciones ▾" Click="OnActions">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Enviar archivos…" Click="OnSendFiles" ToolTip="También puedes arrastrar archivos o carpetas a la ventana" />
+                                <Separator />
+                                <MenuItem Header="Ctrl+Alt+Supr" Click="OnCtrlAltDel" />
+                                <MenuItem Header="Administrador de tareas (Ctrl+Shift+Esc)" Click="OnTaskManager" />
+                                <MenuItem Header="Tecla Windows" Click="OnWinKey" />
+                                <MenuItem Header="Soltar todas las teclas" Click="OnReleaseKeys" />
+                                <Separator />
+                                <MenuItem Header="Pedir fotograma completo" Click="OnKeyframe" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Connection overlay -->
+        <Border x:Name="Overlay" Background="#CC0B0D10" Margin="0,40,0,0">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="560">
+                <ProgressBar x:Name="Spinner" IsIndeterminate="True" Width="220" Height="4" Margin="0,0,0,18" />
+                <TextBlock x:Name="OverlayText" Foreground="#E6EAF0" FontSize="16" TextAlignment="Center" TextWrapping="Wrap" />
+                <StackPanel x:Name="PasswordPanel" Visibility="Collapsed" Margin="0,18,0,0" HorizontalAlignment="Center">
+                    <PasswordBox x:Name="RetryPassword" Width="260" KeyDown="OnRetryKey" />
+                    <CheckBox x:Name="RememberRetry" Content="Recordar contraseña" Margin="0,8,0,0" Foreground="#C9D1DC" />
+                    <Button Content="Reintentar" Margin="0,10,0,0" HorizontalAlignment="Center" Click="OnRetry" Focusable="True" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Notices & transfers (a popup: it has its own window, so it shows above the video) -->
+        <Popup x:Name="ToastPopup" AllowsTransparency="True" Placement="Relative" PlacementTarget="{Binding ElementName=RootGrid}" StaysOpen="True">
+            <Border x:Name="Toast" Background="#F0202630" CornerRadius="8" Padding="14,10" BorderBrush="#334" BorderThickness="1" MaxWidth="420">
+                <StackPanel>
+                    <TextBlock x:Name="ToastText" Foreground="#E6EAF0" TextWrapping="Wrap" />
+                    <ProgressBar x:Name="ToastProgress" Height="4" Margin="0,8,0,0" Visibility="Collapsed" Maximum="1" />
+                </StackPanel>
+            </Border>
+        </Popup>
+    </Grid>
+</Window>

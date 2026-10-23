@@ -1,0 +1,7 @@
+# Build output
+bin/
+obj/
+dist/
+.baseline/
+*.user
+.vs/

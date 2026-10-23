@@ -1,0 +1,219 @@
+<Window x:Class="RemoteConnect.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="RemoteConnect" Width="940" Height="640" MinWidth="720" MinHeight="480"
+        WindowStartupLocation="CenterScreen" Icon="/Assets/app.ico">
+    <Window.Resources>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="16" />
+            <Setter Property="Margin" Value="0,0,0,12" />
+        </Style>
+        <Style x:Key="Muted" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="H2" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+    </Window.Resources>
+
+    <TabControl Margin="12" x:Name="Tabs">
+        <!-- ================= CONNECT ================= -->
+        <TabItem Header="Conectar">
+            <Grid Margin="4,12,4,4">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border Style="{StaticResource Card}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="AddressBox" Grid.Column="0" KeyDown="OnAddressKey" TextChanged="OnAddressChanged"
+                                 ToolTip="ID de Internet (9 cifras) para conectar desde fuera de tu red, o IP / nombre si el equipo no aparece abajo" />
+                        <TextBlock x:Name="AddressHint" Grid.Column="0" Text="ID de Internet (p. ej. 123 456 789), dirección IP o nombre del equipo" IsHitTestVisible="False"
+                                   Margin="12,0" VerticalAlignment="Center" Style="{StaticResource Muted}" />
+                        <Button Grid.Column="1" Content="Conectar" Margin="8,0,0,0" Click="OnConnectAddress" />
+                    </Grid>
+                </Border>
+
+                <DockPanel Grid.Row="1" Margin="2,0,2,8">
+                    <TextBlock Text="Equipos" Style="{StaticResource H2}" DockPanel.Dock="Left" />
+                    <TextBlock x:Name="DiscoveryHint" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="12,0,0,8"
+                               Text="Se detectan automáticamente en tu red, aunque cambien de IP." />
+                </DockPanel>
+
+                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                    <ItemsControl x:Name="HostList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Style="{StaticResource Card}" Padding="14,12">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Ellipse Width="10" Height="10" Fill="{Binding StatusBrush}" Margin="0,0,14,0" VerticalAlignment="Center" />
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Title}" FontSize="15" FontWeight="SemiBold" />
+                                            <TextBlock Text="{Binding Subtitle}" Style="{StaticResource Muted}" FontSize="12" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                            <Button Content="Despertar" Margin="4,0" Click="OnWake" Tag="{Binding}" Visibility="{Binding WakeVisibility}"
+                                                    ToolTip="Enviar Wake-on-LAN (requiere activarlo en la BIOS/adaptador del equipo)" />
+                                            <Button Content="Olvidar" Margin="4,0" Click="OnForget" Tag="{Binding}" Visibility="{Binding ForgetVisibility}" />
+                                            <Button Content="Conectar" Margin="4,0,0,0" Click="OnConnectHost" Tag="{Binding}"
+                                                    Style="{DynamicResource AccentButtonStyle}" />
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+                <TextBlock x:Name="EmptyHint" Grid.Row="2" Style="{StaticResource Muted}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                           TextAlignment="Center" MaxWidth="460"
+                           Text="Buscando equipos en la red…&#x0a;Instala RemoteConnect en el PC remoto y activa «Permitir conexiones» en su pestaña «Este equipo»." />
+            </Grid>
+        </TabItem>
+
+        <!-- ================= THIS PC (HOST) ================= -->
+        <TabItem Header="Este equipo">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="4,12,8,4">
+                    <Border Style="{StaticResource Card}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Acceso remoto a este equipo" Style="{StaticResource H2}" />
+                                <TextBlock x:Name="HostStatusText" TextWrapping="Wrap" />
+                                <TextBlock x:Name="HostAddressText" Style="{StaticResource Muted}" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <ToggleButton x:Name="EnabledToggle" Content="Permitir conexiones" MinWidth="170" Click="OnEnabledChanged" />
+                                <Button x:Name="HostRunButton" Content="Iniciar host" Margin="0,8,0,0" Click="OnHostRun" />
+                                <Button x:Name="KickButton" Content="Desconectar sesión" Margin="0,8,0,0" Click="OnKick" Visibility="Collapsed" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Acceso por Internet" Style="{StaticResource H2}" />
+                                <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,8"
+                                           Text="Desde fuera de tu red, conecta con este ID y la contraseña. Sin abrir puertos ni servidores propios: conexión directa P2P cifrada (QUIC). No funciona si ambos lados están tras un NAT simétrico (algunos operadores móviles / CGNAT)." />
+                                <TextBlock x:Name="InternetIdText" FontSize="26" FontWeight="SemiBold" FontFamily="Cascadia Mono, Consolas" />
+                                <TextBlock x:Name="InternetStatusText" Style="{StaticResource Muted}" Margin="0,4,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <ToggleButton x:Name="InternetToggle" Content="Permitir por Internet" MinWidth="170" Click="OnInternetChanged" />
+                                <Button Content="Copiar ID" Margin="0,8,0,0" Click="OnCopyInternetId" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="Seguridad" Style="{StaticResource H2}" />
+                            <TextBlock Style="{StaticResource Muted}" Margin="0,0,0,10"
+                                       Text="Las conexiones van cifradas con TLS. Cada cliente fija la huella de este equipo la primera vez que se conecta." />
+                            <StackPanel Orientation="Horizontal">
+                                <PasswordBox x:Name="NewPassword" Width="240" />
+                                <PasswordBox x:Name="NewPassword2" Width="240" Margin="8,0,0,0" />
+                                <Button Content="Guardar contraseña" Margin="8,0,0,0" Click="OnSavePassword" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Muted}" FontSize="11" Margin="0,4,0,0" Text="Contraseña / repetir (mínimo 6 caracteres)" />
+                            <TextBlock x:Name="FingerprintText" Style="{StaticResource Muted}" Margin="0,10,0,0" FontFamily="Cascadia Mono, Consolas" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.ColumnSpan="2" Text="Opciones" Style="{StaticResource H2}" />
+
+                            <TextBlock Grid.Row="1" Text="Nombre visible" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="1" Grid.Column="1" x:Name="HostNameBox" Margin="0,4" LostFocus="OnHostOptionChanged" />
+
+                            <TextBlock Grid.Row="2" Text="Puerto TCP" VerticalAlignment="Center" />
+                            <TextBox Grid.Row="2" Grid.Column="1" x:Name="PortBox" Margin="0,4" Width="120" HorizontalAlignment="Left" LostFocus="OnHostOptionChanged" />
+
+                            <TextBlock Grid.Row="3" Text="Archivos recibidos en" VerticalAlignment="Center" />
+                            <DockPanel Grid.Row="3" Grid.Column="1" Margin="0,4">
+                                <Button DockPanel.Dock="Right" Content="Cambiar…" Margin="8,0,0,0" Click="OnPickFolder" />
+                                <TextBox x:Name="FolderBox" IsReadOnly="True" />
+                            </DockPanel>
+
+                            <TextBlock Grid.Row="4" Text="Codificador de vídeo" VerticalAlignment="Center" />
+                            <ComboBox Grid.Row="4" Grid.Column="1" x:Name="EncoderBox" Margin="0,4" Width="260" HorizontalAlignment="Left" SelectionChanged="OnHostOptionChanged">
+                                <ComboBoxItem Content="Automático (GPU primero)" Tag="auto" />
+                                <ComboBoxItem Content="NVIDIA NVENC (H.264 / HEVC / AV1)" Tag="h264_nvenc" />
+                                <ComboBoxItem Content="Intel Quick Sync (H.264 / HEVC)" Tag="h264_qsv" />
+                                <ComboBoxItem Content="AMD AMF (H.264 / HEVC / AV1)" Tag="h264_amf" />
+                                <ComboBoxItem Content="x264 (CPU, solo H.264)" Tag="libx264" />
+                                <ComboBoxItem Content="Media Foundation" Tag="h264_mf" />
+                            </ComboBox>
+
+                            <StackPanel Grid.Row="5" Grid.Column="1" Margin="0,8,0,0">
+                                <CheckBox x:Name="KeepAwakeBox" Content="Impedir suspensión mientras hay una sesión" Click="OnHostOptionChanged" />
+                                <CheckBox x:Name="AudioBox" Content="Permitir enviar el audio" Click="OnHostOptionChanged" Margin="0,4,0,0" />
+                                <CheckBox x:Name="ClipboardBox" Content="Sincronizar portapapeles (texto e imágenes)" Click="OnHostOptionChanged" Margin="0,4,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Instalación" Style="{StaticResource H2}" />
+                                <TextBlock x:Name="InstallText" Style="{StaticResource Muted}" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <Button x:Name="InstallButton" Content="Instalar en este equipo" Click="OnInstall" Style="{DynamicResource AccentButtonStyle}" MinWidth="190" />
+                                <Button x:Name="UninstallButton" Content="Desinstalar" Margin="0,8,0,0" Click="OnUninstall" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <TextBlock Style="{StaticResource Muted}" FontSize="11" Margin="4,0,0,8">
+                        <Run Text="Registro:" /> <Hyperlink Click="OnOpenLog"><Run x:Name="LogPathRun" /></Hyperlink>
+                    </TextBlock>
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+    </TabControl>
+</Window>
