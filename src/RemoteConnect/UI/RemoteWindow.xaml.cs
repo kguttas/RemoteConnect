@@ -208,7 +208,8 @@ public partial class RemoteWindow : Window
             _sizedToRemote = true;
             // Open the window at the remote aspect ratio, as large as fits the work area.
             var dpi = VisualTreeHelper.GetDpi(this);
-            double w = f.Width / dpi.DpiScaleX, h = f.Height / dpi.DpiScaleY;
+            bool turned = (_session.Host.ViewRotation & 1) != 0;
+            double w = (turned ? f.Height : f.Width) / dpi.DpiScaleX, h = (turned ? f.Width : f.Height) / dpi.DpiScaleY;
             var area = SystemParameters.WorkArea;
             double scale = Math.Min(1, Math.Min((area.Width - 40) / w, (area.Height - 80 - Toolbar.Height) / h));
             Width = Math.Max(MinWidth, w * scale + 16);
@@ -223,7 +224,7 @@ public partial class RemoteWindow : Window
     {
         var f = _format;
         int vw = f?.Width ?? 0, vh = f?.Height ?? 0;
-        var layout = ViewLayout.Compute(Video.PixelWidth, Video.PixelHeight, vw, vh, FitToggle.IsChecked == true, _panX, _panY);
+        var layout = ViewLayout.Compute(Video.PixelWidth, Video.PixelHeight, vw, vh, FitToggle.IsChecked == true, _panX, _panY, _session.Host.ViewRotation);
         if (layout == _layout) return;
         _layout = layout;
         _video.SetLayout(layout);
@@ -363,6 +364,26 @@ public partial class RemoteWindow : Window
         _settings.CaptureSystemKeys = KeysToggle.IsChecked == true;
         _settings.Save();
         if (_hook is not null) _hook.Enabled = _settings.CaptureSystemKeys;
+    }
+
+    private void OnRotateMenu(object sender, RoutedEventArgs e)
+    {
+        int r = _session.Host.ViewRotation & 3;
+        Rotate0.IsChecked = r == 0; Rotate1.IsChecked = r == 1; Rotate2.IsChecked = r == 2; Rotate3.IsChecked = r == 3;
+        var menu = RotateButton.ContextMenu!;
+        menu.PlacementTarget = RotateButton;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    private void OnRotate(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string tag } || !int.TryParse(tag, out int r)) return;
+        _session.Host.ViewRotation = r;
+        _settings.Save(); // remembered per remote machine
+        _sizedToRemote = false;
+        if (_format is { } f) OnVideoFormat(f); // reshape the window to the new aspect ratio
+        else UpdateView();
     }
 
     private void OnActions(object sender, RoutedEventArgs e)

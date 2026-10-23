@@ -22,7 +22,7 @@ public static class SelfTest
         int rc;
         try
         {
-            rc = args[0] == "--testclient" ? await TestClient(args) : Capture() + Codecs();
+            rc = args[0] == "--testclient" ? await TestClient(args) : Rotation() + Capture() + Codecs();
         }
         catch (Exception ex)
         {
@@ -31,6 +31,32 @@ public static class SelfTest
         }
         File.WriteAllText(Path.Combine(Paths.UserDir, "selftest.txt"), Out.ToString());
         return rc;
+    }
+
+    /// <summary>
+    /// Host-side rotation (rotated displays) and client-side rotation (the Rotate button) must agree: turning the
+    /// image r quarter turns on the host must look exactly like showing it unturned with client rotation r.
+    /// </summary>
+    private static unsafe int Rotation()
+    {
+        const int W = 37, H = 23; // odd sizes catch off-by-one errors
+        var src = new uint[W * H];
+        for (int i = 0; i < src.Length; i++) src[i] = (uint)i * 2654435761u;
+        int bad = 0;
+        for (int r = 1; r < 4; r++)
+        {
+            int dw = (r & 1) != 0 ? H : W, dh = (r & 1) != 0 ? W : H;
+            var dst = new uint[dw * dh];
+            fixed (uint* s = src) fixed (uint* d = dst) ScreenCapture.Rotate((byte*)s, W * 4, W, H, r, d, dw, dh);
+            for (int y = 0; y < dh; y++)
+                for (int x = 0; x < dw; x++)
+                {
+                    var (u, v) = ViewLayout.ToVideo(r, (x + 0.5) / dw, (y + 0.5) / dh);
+                    if (dst[y * dw + x] != src[(int)(v * H) * W + (int)(u * W)]) bad++;
+                }
+        }
+        P($"Rotation: host and client rotation {(bad == 0 ? "agree" : $"DISAGREE on {bad} pixels")}");
+        return bad == 0 ? 0 : 1;
     }
 
     private static unsafe int Codecs()
@@ -398,6 +424,7 @@ public static class SelfTest
             : System.Net.IPEndPoint.TryParse(addr, out var ep) && ep.Port != 0
                 ? new KnownHost { Name = addr, LastAddress = ep.Address.ToString(), Port = ep.Port }
                 : new KnownHost { Name = addr, LastAddress = addr };
+        host.ViewRotation = args.SkipWhile(a => a != "--rotate").Skip(1).Select(int.Parse).FirstOrDefault(0) / 90; // client-side, for --window
         var session = new RemoteSession(host, pwd, new StreamOptions { MaxFps = args.SkipWhile(a => a != "--fps").Skip(1).Select(int.Parse).FirstOrDefault(60), BitrateMbps = args.SkipWhile(a => a != "--mbps").Skip(1).Select(int.Parse).FirstOrDefault(30), Chroma444 = want444, Audio = true, Codec = args.SkipWhile(a => a != "--codec").Skip(1).FirstOrDefault() ?? "auto" }, discovery, args.SkipWhile(a => a != "--signal").Skip(1).FirstOrDefault());
         int audio = 0, cursors = 0;
         string? fmt = null, failure = null;

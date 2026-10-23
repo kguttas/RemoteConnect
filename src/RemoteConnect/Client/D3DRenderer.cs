@@ -17,29 +17,35 @@ namespace RemoteConnect.Client;
 /// Where the remote picture goes in the window, in physical pixels: which part of the video (Src*) is drawn
 /// into which rectangle of the client area (Dst*). Fit = letterboxed and scaled; 1:1 = pixel exact, panning
 /// with the mouse when the remote screen is larger than the window.
+/// Rotation (clockwise quarter turns) turns the picture on the client; Src* are then in the rotated picture
+/// (<see cref="ViewW"/> × <see cref="ViewH"/>), while VideoW × VideoH stay the decoded size.
 /// </summary>
 public sealed record ViewLayout(int ClientW, int ClientH, int VideoW, int VideoH,
-    double SrcX, double SrcY, double SrcW, double SrcH, int DstX, int DstY, int DstW, int DstH)
+    double SrcX, double SrcY, double SrcW, double SrcH, int DstX, int DstY, int DstW, int DstH, int Rotation = 0)
 {
     public bool Exact => Math.Abs(SrcW - DstW) < 0.01 && Math.Abs(SrcH - DstH) < 0.01;
+    public int ViewW => (Rotation & 1) != 0 ? VideoH : VideoW;
+    public int ViewH => (Rotation & 1) != 0 ? VideoW : VideoH;
 
     public static ViewLayout Native(int w, int h) => new(w, h, w, h, 0, 0, w, h, 0, 0, w, h);
 
-    public static ViewLayout Compute(int cw, int ch, int vw, int vh, bool fit, double panX, double panY)
+    public static ViewLayout Compute(int cw, int ch, int vw, int vh, bool fit, double panX, double panY, int rotation = 0)
     {
-        if (cw <= 0 || ch <= 0 || vw <= 0 || vh <= 0) return new(Math.Max(cw, 0), Math.Max(ch, 0), vw, vh, 0, 0, vw, vh, 0, 0, 0, 0);
+        rotation &= 3;
+        int pw = (rotation & 1) != 0 ? vh : vw, ph = (rotation & 1) != 0 ? vw : vh; // picture as shown
+        if (cw <= 0 || ch <= 0 || vw <= 0 || vh <= 0) return new(Math.Max(cw, 0), Math.Max(ch, 0), vw, vh, 0, 0, pw, ph, 0, 0, 0, 0, rotation);
         if (fit)
         {
-            double s = Math.Min((double)cw / vw, (double)ch / vh);
-            int dw = Math.Max(1, (int)Math.Round(vw * s)), dh = Math.Max(1, (int)Math.Round(vh * s));
-            return new(cw, ch, vw, vh, 0, 0, vw, vh, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+            double s = Math.Min((double)cw / pw, (double)ch / ph);
+            int dw = Math.Max(1, (int)Math.Round(pw * s)), dh = Math.Max(1, (int)Math.Round(ph * s));
+            return new(cw, ch, vw, vh, 0, 0, pw, ph, (cw - dw) / 2, (ch - dh) / 2, dw, dh, rotation);
         }
         (double sx, int dx, int w) Axis(int client, int video, double pan) => video <= client
             ? (0, (client - video) / 2, video)
             : (Math.Round(Math.Clamp(pan, 0, 1) * (video - client)), 0, client);
-        var (sx, dx, w) = Axis(cw, vw, panX);
-        var (sy, dy, h) = Axis(ch, vh, panY);
-        return new(cw, ch, vw, vh, sx, sy, w, h, dx, dy, w, h);
+        var (sx, dx, w) = Axis(cw, pw, panX);
+        var (sy, dy, h) = Axis(ch, ph, panY);
+        return new(cw, ch, vw, vh, sx, sy, w, h, dx, dy, w, h, rotation);
     }
 
     /// <summary>Window pixel → normalized position on the remote monitor (0..1).</summary>
@@ -47,8 +53,18 @@ public sealed record ViewLayout(int ClientW, int ClientH, int VideoW, int VideoH
     {
         if (DstW <= 0 || DstH <= 0 || VideoW <= 0 || VideoH <= 0) return (0, 0);
         double vx = SrcX + (px - DstX) * SrcW / DstW, vy = SrcY + (py - DstY) * SrcH / DstH;
-        return ((float)Math.Clamp(vx / VideoW, 0, 1), (float)Math.Clamp(vy / VideoH, 0, 1));
+        var (u, v) = ToVideo(Rotation, Math.Clamp(vx / ViewW, 0, 1), Math.Clamp(vy / ViewH, 0, 1));
+        return ((float)u, (float)v);
     }
+
+    /// <summary>Normalized point of the rotated picture → the same point of the decoded video.</summary>
+    public static (double U, double V) ToVideo(int rotation, double x, double y) => (rotation & 3) switch
+    {
+        1 => (y, 1 - x),
+        2 => (1 - x, 1 - y),
+        3 => (1 - y, x),
+        _ => (x, y),
+    };
 }
 
 /// <summary>
@@ -62,14 +78,15 @@ public sealed record ViewLayout(int ClientW, int ClientH, int VideoW, int VideoH
 public sealed unsafe class D3DRenderer : IDisposable
 {
     private const string ShaderSource = """
-        cbuffer View : register(b0) { float4 src; float4 offs; float4 m0; float4 m1; float4 m2; };
+        cbuffer View : register(b0) { float4 src; float4 offs; float4 m0; float4 m1; float4 m2; float4 r0; float4 r1; };
         struct VSOut { float4 pos : SV_Position; float2 uv : TEXCOORD0; };
         VSOut vs(uint id : SV_VertexID)
         {
             float2 t = float2((id << 1) & 2, id & 2);
             VSOut o;
             o.pos = float4(t.x * 2 - 1, 1 - t.y * 2, 0, 1);
-            o.uv = src.xy + t * (src.zw - src.xy);
+            float3 p = float3(src.xy + t * (src.zw - src.xy), 1); // in the picture as shown
+            o.uv = float2(dot(r0.xyz, p), dot(r1.xyz, p));       // → the (unrotated) video
             return o;
         }
         SamplerState sY : register(s0);
@@ -164,7 +181,7 @@ public sealed unsafe class D3DRenderer : IDisposable
         _point = _device.CreateSamplerState(new SamplerDescription(Filter.MinMagMipPoint, TextureAddressMode.Clamp));
         _linear = _device.CreateSamplerState(new SamplerDescription(Filter.MinMagMipLinear, TextureAddressMode.Clamp));
         _raster = _device.CreateRasterizerState(new RasterizerDescription(CullMode.None, FillMode.Solid));
-        _cb = _device.CreateBuffer(new BufferDescription(80, BindFlags.ConstantBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
+        _cb = _device.CreateBuffer(new BufferDescription(112, BindFlags.ConstantBuffer, ResourceUsage.Dynamic, CpuAccessFlags.Write));
     }
 
     /// <summary>Codecs this machine's GPU decodes (D3D11 video decoder profiles).</summary>
@@ -318,13 +335,25 @@ public sealed unsafe class D3DRenderer : IDisposable
             _ctx.RSSetState(_raster);
             var map = _ctx.Map(_cb, MapMode.WriteDiscard);
             var p = (float*)map.DataPointer;
-            p[0] = (float)(layout.SrcX / _vw); p[1] = (float)(layout.SrcY / _vh);
-            p[2] = (float)((layout.SrcX + layout.SrcW) / _vw); p[3] = (float)((layout.SrcY + layout.SrcH) / _vh);
+            int r = layout.Rotation & 3;
+            double pw = layout.ViewW, ph = layout.ViewH;
+            p[0] = (float)(layout.SrcX / pw); p[1] = (float)(layout.SrcY / ph);
+            p[2] = (float)((layout.SrcX + layout.SrcW) / pw); p[3] = (float)((layout.SrcY + layout.SrcH) / ph);
             double sx = layout.SrcW / layout.DstW, sy = layout.SrcH / layout.DstH;
+            if ((r & 1) != 0) (sx, sy) = (sy, sx); // the video's x axis runs along the picture's y
             p[4] = sx > 1.01 ? (float)(0.25 * sx / _vw) : 0;
             p[5] = sy > 1.01 ? (float)(0.25 * sy / _vh) : 0;
             p[6] = p[7] = 0;
             for (int i = 0; i < 12; i++) p[8 + i] = _matrix[i];
+            // Affine map (x, y, 1) → video u and v; see ViewLayout.ToVideo.
+            ReadOnlySpan<float> rot = r switch
+            {
+                1 => [0, 1, 0, 0, -1, 0, 1, 0],
+                2 => [-1, 0, 1, 0, 0, -1, 1, 0],
+                3 => [0, -1, 1, 0, 1, 0, 0, 0],
+                _ => [1, 0, 0, 0, 0, 1, 0, 0],
+            };
+            for (int i = 0; i < 8; i++) p[20 + i] = rot[i];
             _ctx.Unmap(_cb, 0);
 
             bool exact = layout.Exact;

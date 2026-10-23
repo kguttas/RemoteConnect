@@ -65,6 +65,17 @@
                     </ComboBox>
                     <ToggleButton x:Name="Chroma444" Content="Texto nítido" ToolTip="Color 4:4:4 sin submuestreo: texto y código perfectamente nítidos (NVENC o x264)" Click="OnStreamOptionChanged" />
                     <ToggleButton x:Name="FitToggle" Content="Ajustar" ToolTip="Ajustar a la ventana / tamaño real 1:1 píxel" Click="OnFitChanged" />
+                    <Button x:Name="RotateButton" Content="&#xE7AD;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" Click="OnRotateMenu"
+                            ToolTip="Girar la imagen (si la pantalla remota se ve de lado, p. ej. en consolas portátiles)">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem x:Name="Rotate0" Header="Sin girar" Tag="0" Click="OnRotate" IsCheckable="True" />
+                                <MenuItem x:Name="Rotate1" Header="90° a la derecha" Tag="1" Click="OnRotate" IsCheckable="True" />
+                                <MenuItem x:Name="Rotate2" Header="180°" Tag="2" Click="OnRotate" IsCheckable="True" />
+                                <MenuItem x:Name="Rotate3" Header="90° a la izquierda" Tag="3" Click="OnRotate" IsCheckable="True" />
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                     <ToggleButton x:Name="AudioToggle" Content="Audio" ToolTip="Recibir el sonido del equipo remoto" Click="OnStreamOptionChanged" />
                     <ToggleButton x:Name="KeysToggle" Content="Teclas Win" ToolTip="Enviar Win, Alt+Tab, Ctrl+Esc… al equipo remoto. Ctrl+Alt+Inicio libera el teclado." Click="OnKeysChanged" />
                     <Button x:Name="ActionsButton" Content="Acciones ▾" Click="OnActions">

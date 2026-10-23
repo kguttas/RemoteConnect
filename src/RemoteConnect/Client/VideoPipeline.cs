@@ -200,7 +200,7 @@ public sealed unsafe class VideoPipeline : IDisposable
                     var layout = _layout;
                     if (_windowed && (_hwnd == 0 || layout is null)) continue;
                     if (layout is not null && (layout.VideoW != decoder.Width || layout.VideoH != decoder.Height))
-                        layout = ViewLayout.Compute(layout.ClientW, layout.ClientH, decoder.Width, decoder.Height, true, 0, 0);
+                        layout = ViewLayout.Compute(layout.ClientW, layout.ClientH, decoder.Width, decoder.Height, true, 0, 0, layout.Rotation);
                     if (!_renderer.Draw(layout ?? ViewLayout.Native(decoder.Width, decoder.Height))) continue;
                     DecodeMs = Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
                     FramesShown++;

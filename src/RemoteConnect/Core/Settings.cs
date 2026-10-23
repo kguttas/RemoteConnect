@@ -192,6 +192,8 @@ public sealed class KnownHost
     public string? InternetId { get; set; }
     public string? ProtectedPassword { get; set; }
     public DateTime? LastConnected { get; set; }
+    /// <summary>Client-side rotation of this host's picture, in clockwise quarter turns (0 = as received).</summary>
+    public int ViewRotation { get; set; }
 
     public string? GetPassword() => ProtectedPassword is null ? null : Security.Unprotect(ProtectedPassword);
     public void SetPassword(string? password) => ProtectedPassword = password is null ? null : Security.Protect(password);

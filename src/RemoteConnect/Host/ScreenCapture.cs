@@ -21,6 +21,11 @@ public sealed class PointerShape
 /// GPU desktop capture via DXGI Desktop Duplication. In GPU mode the newest frame stays in a GPU texture
 /// that the encoder copies from on the GPU (zero-copy); otherwise frames are copied into a CPU BGRA buffer
 /// (top-down, Stride = Width * 4) which the encoder reads directly.
+///
+/// Rotated displays (portrait panels turned landscape, e.g. handheld PCs like the OneXPlayer): Desktop
+/// Duplication hands out the image in the panel's native orientation. It is turned back to the orientation
+/// the user sees (<see cref="Width"/> × <see cref="Height"/> are the rotated size) while copying to the CPU
+/// buffer, so the encoder, the client and the input mapping all see the desktop the right way up.
 /// </summary>
 public sealed unsafe class ScreenCapture : IDisposable
 {
@@ -35,6 +40,10 @@ public sealed unsafe class ScreenCapture : IDisposable
 
     public int Width { get; }
     public int Height { get; }
+    /// <summary>Clockwise quarter turns from the captured (native) image to the desktop: 0 = none.</summary>
+    public int Rotation => _rotation;
+    private int _rotation;
+    private int _srcW, _srcH; // native (unrotated) size of the captured image
     public int Stride { get; }
     public MonitorInfo Monitor { get; }
     public byte* Buffer { get; }
@@ -49,7 +58,7 @@ public sealed unsafe class ScreenCapture : IDisposable
     }
     private bool _gpuMode;
     /// <summary>The ID3D11Device frames live on, for an encoder that reads textures; 0 if the desktop isn't 8-bit BGRA.</summary>
-    public nint DevicePointer => _desktopFormat == Format.B8G8R8A8_UNorm ? _device.NativePointer : 0;
+    public nint DevicePointer => _desktopFormat == Format.B8G8R8A8_UNorm && _rotation == 0 ? _device.NativePointer : 0; // rotation needs the CPU path
     private readonly Format _desktopFormat;
 
     public static List<MonitorInfo> EnumerateMonitors()
@@ -145,12 +154,30 @@ public sealed unsafe class ScreenCapture : IDisposable
             foundAdapter!.Dispose();
         }
 
-        var desc = _dup.Description.ModeDescription;
+        var dupDesc = _dup.Description;
+        var desc = dupDesc.ModeDescription;
         _desktopFormat = desc.Format;
+        _rotation = dupDesc.Rotation switch { ModeRotation.Rotate90 => 1, ModeRotation.Rotate180 => 2, ModeRotation.Rotate270 => 3, _ => 0 };
+        // Testing aid: pretend the display is rotated (REMOTECONNECT_FORCEROTATE=90 / 180 / 270).
+        bool forced = int.TryParse(Environment.GetEnvironmentVariable("REMOTECONNECT_FORCEROTATE"), out int forceDeg) && forceDeg % 90 == 0;
+        if (forced) _rotation = forceDeg / 90 % 4;
         // Encoders and the capture thread share this device; FFmpeg may touch it from its own threads.
         using (var mt = _device.QueryInterfaceOrNull<ID3D11Multithread>()) mt?.SetMultithreadProtected(true);
-        Width = (int)desc.Width;
-        Height = (int)desc.Height;
+        if (_rotation == 0 || forced)
+        {
+            _srcW = (int)desc.Width;
+            _srcH = (int)desc.Height;
+        }
+        else
+        {
+            // The desktop rectangle is in the rotated orientation; the captured image is the native one.
+            _srcW = _rotation == 2 ? Monitor.Width : Monitor.Height;
+            _srcH = _rotation == 2 ? Monitor.Height : Monitor.Width;
+        }
+        bool swap = (_rotation & 1) != 0;
+        Width = swap ? _srcH : _srcW;
+        Height = swap ? _srcW : _srcH;
+        if (_rotation != 0) Log.Write($"Display rotated {_rotation * 90}°{(forced ? " (forced)" : "")}: captured {_srcW}x{_srcH}, streamed {Width}x{Height}");
         Stride = Width * 4;
         Buffer = (byte*)NativeMemory.AlignedAlloc((nuint)(Stride * Height), 64);
     }
@@ -201,6 +228,13 @@ public sealed unsafe class ScreenCapture : IDisposable
                 else if (_staging is null)
                 {
                     var d = tex.Description;
+                    if (_rotation != 0 && (d.Width != _srcW || d.Height != _srcH))
+                    {
+                        // Not the size we derived from the desktop rectangle: trust the texture.
+                        Log.Write($"Captured image is {d.Width}x{d.Height}, expected {_srcW}x{_srcH}");
+                        if (d.Width == Width && d.Height == Height) _rotation = 0; // already the right way up
+                        _srcW = (int)d.Width; _srcH = (int)d.Height;
+                    }
                     d.Usage = ResourceUsage.Staging;
                     d.BindFlags = BindFlags.None;
                     d.CPUAccessFlags = CpuAccessFlags.Read;
@@ -235,7 +269,9 @@ public sealed unsafe class ScreenCapture : IDisposable
         {
             byte* src = (byte*)map.DataPointer;
             int rowPitch = (int)map.RowPitch;
-            if (rowPitch == Stride)
+            if (_rotation != 0)
+                Rotate(src, rowPitch, Math.Min(_srcW, (_rotation & 1) != 0 ? Height : Width), Math.Min(_srcH, (_rotation & 1) != 0 ? Width : Height), _rotation, (uint*)Buffer, Width, Height);
+            else if (rowPitch == Stride)
                 System.Buffer.MemoryCopy(src, Buffer, (long)Stride * Height, (long)Stride * Height);
             else
                 for (int y = 0; y < Height; y++)
@@ -248,6 +284,43 @@ public sealed unsafe class ScreenCapture : IDisposable
         HasImage = true;
         LastCopyMs = Stopwatch.GetElapsedTime(copyStart).TotalMilliseconds;
         return CaptureResult.Frame;
+    }
+
+    /// <summary>
+    /// Copies a <paramref name="w"/> × <paramref name="h"/> BGRA image turned <paramref name="quarterTurns"/> × 90°
+    /// clockwise into <paramref name="dst"/> (<paramref name="dw"/> × <paramref name="dh"/>, tightly packed).
+    /// Works in 32 × 32 tiles so both the reads and the scattered writes stay in cache.
+    /// </summary>
+    public static void Rotate(byte* src, int srcPitch, int w, int h, int quarterTurns, uint* dst, int dw, int dh)
+    {
+        const int T = 32;
+        for (int ty = 0; ty < h; ty += T)
+        {
+            int yEnd = Math.Min(h, ty + T);
+            for (int tx = 0; tx < w; tx += T)
+            {
+                int xEnd = Math.Min(w, tx + T);
+                for (int y = ty; y < yEnd; y++)
+                {
+                    uint* row = (uint*)(src + (long)y * srcPitch);
+                    switch (quarterTurns)
+                    {
+                        case 1: // (x, y) → (dw - 1 - y, x)
+                            for (int x = tx; x < xEnd; x++) dst[(long)x * dw + (dw - 1 - y)] = row[x];
+                            break;
+                        case 2: // (x, y) → (dw - 1 - x, dh - 1 - y)
+                        {
+                            uint* d = dst + (long)(dh - 1 - y) * dw + (dw - 1);
+                            for (int x = tx; x < xEnd; x++) d[-x] = row[x];
+                            break;
+                        }
+                        default: // 3: (x, y) → (y, dh - 1 - x)
+                            for (int x = tx; x < xEnd; x++) dst[(long)(dh - 1 - x) * dw + y] = row[x];
+                            break;
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>GPU mode: copies the newest frame (top-left width × height) into an encoder texture slice.</summary>
