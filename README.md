@@ -1,5 +1,9 @@
 # RemoteConnect
 
+[![Descargar RemoteConnect.exe](https://img.shields.io/github/v/release/kguttas/RemoteConnect?label=Descargar%20RemoteConnect.exe&style=for-the-badge&logo=windows)](https://github.com/kguttas/RemoteConnect/releases/latest/download/RemoteConnect.exe)
+
+**[⬇ Descargar la última versión (RemoteConnect.exe)](https://github.com/kguttas/RemoteConnect/releases/latest/download/RemoteConnect.exe)** · [Todas las versiones](https://github.com/kguttas/RemoteConnect/releases) · Windows 10/11 x64, sin instalar nada más
+
 Escritorio remoto para Windows: rápido (H.264 / HEVC / AV1 por GPU de punta a punta, ~60–120 fps, bitrate adaptativo), cifrado (TLS / QUIC), y que
 **no depende de la IP**: cada equipo se identifica por un ID estable y se localiza por la red aunque el DHCP
 le cambie la dirección. Si la conexión se cae, se reconecta solo. **También por Internet**, P2P y gratis:
@@ -7,7 +11,7 @@ sin abrir puertos en el router ni montar servidores (ver [Conexión por Internet
 
 ## Instalación (2 minutos)
 
-Un único archivo: `dist\RemoteConnect.exe` (autocontenido, no necesita .NET instalado).
+Un único archivo: [`RemoteConnect.exe`](https://github.com/kguttas/RemoteConnect/releases/latest/download/RemoteConnect.exe) (autocontenido, no necesita .NET instalado; al compilarlo tú queda en `dist\RemoteConnect.exe`).
 
 **En el PC remoto (el que quieres controlar):**
 1. Ejecuta `RemoteConnect.exe` → pestaña **Este equipo**.
