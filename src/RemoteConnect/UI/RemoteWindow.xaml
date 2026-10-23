@@ -71,6 +71,7 @@
                         <Button.ContextMenu>
                             <ContextMenu>
                                 <MenuItem Header="Enviar archivos…" Click="OnSendFiles" ToolTip="También puedes arrastrar archivos o carpetas a la ventana" />
+                                <MenuItem Header="Recibir archivos del remoto…" Click="OnReceiveFiles" ToolTip="Explorar las carpetas del equipo remoto y descargar archivos a este equipo" />
                                 <Separator />
                                 <MenuItem Header="Ctrl+Alt+Supr" Click="OnCtrlAltDel" />
                                 <MenuItem Header="Administrador de tareas (Ctrl+Shift+Esc)" Click="OnTaskManager" />

@@ -388,6 +388,22 @@ public partial class RemoteWindow : Window
         if (dlg.ShowDialog(this) == true) _ = Upload(dlg.FileNames);
     }
 
+    private RemoteFilesWindow? _filesWindow;
+
+    private void OnReceiveFiles(object sender, RoutedEventArgs e)
+    {
+        if (!_session.IsConnected) { ShowToast("No hay conexión.", 3); return; }
+        if (_session.Info?.FileDownload != true)
+        {
+            ShowToast("El equipo remoto no permite descargar archivos (necesita RemoteConnect 2.1 o posterior y tener la opción activada).", 8);
+            return;
+        }
+        if (_filesWindow is { IsLoaded: true }) { _filesWindow.Activate(); return; }
+        _filesWindow = new RemoteFilesWindow(_session, _settings) { Owner = this };
+        _filesWindow.Closed += (_, _) => _filesWindow = null;
+        _filesWindow.Show();
+    }
+
     private void OnRetry(object sender, RoutedEventArgs e)
     {
         var pwd = RetryPassword.Password;

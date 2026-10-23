@@ -19,6 +19,7 @@ public sealed class HostSession
     private readonly CancellationTokenSource _cts = new();
     private readonly InputInjector _input = new();
     private readonly FileReceiver _files;
+    private readonly FileServer _fileServer;
     private readonly RateController _rate = new();
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly Lock _optLock = new();
@@ -52,6 +53,7 @@ public sealed class HostSession
         RemoteAddress = remoteAddress;
         ViaInternet = viaInternet;
         _files = new FileReceiver(settings.ReceiveFolder, ack => _conn.SendJson(Msg.FileAck, ack));
+        _fileServer = new FileServer(_conn);
     }
 
     private static StreamOptions Sanitize(StreamOptions o) => new()
@@ -110,6 +112,7 @@ public sealed class HostSession
             StopAudio();
             _input.Dispose();
             _files.Dispose();
+            _fileServer.Dispose();
             if (_clipboard is not null) await _ui.InvokeAsync(() => _clipboard.Dispose());
         }
     }
@@ -182,6 +185,16 @@ public sealed class HostSession
                 break;
             case Msg.FileEnd:
                 _files.End(r.I32());
+                break;
+            case Msg.DirList:
+                if (_settings.AllowFileDownload) _fileServer.List(ProtocolInfo.FromJson<DirRequest>(p.Span).Path);
+                else _conn.SendJson(Msg.DirListing, new DirListingInfo { Error = "El equipo remoto no permite descargar archivos." });
+                break;
+            case Msg.FileGet:
+                if (_settings.AllowFileDownload) _fileServer.Get(ProtocolInfo.FromJson<FileGetRequest>(p.Span));
+                break;
+            case Msg.FileCancel:
+                _fileServer.Cancel();
                 break;
         }
     }
@@ -531,65 +544,3 @@ public sealed class HostSession
     }
 }
 
-/// <summary>Writes uploaded files under the receive folder, refusing any path that escapes it.</summary>
-public sealed class FileReceiver(string root, Action<FileAckInfo> ack) : IDisposable
-{
-    private readonly Dictionary<int, (FileStream Stream, string Path)> _open = new();
-
-    public void Begin(FileHeader h)
-    {
-        try
-        {
-            var parts = h.RelativePath.Split('/', '\\')
-                .Select(s => string.Concat(s.Split(Path.GetInvalidFileNameChars())).Trim())
-                .Where(s => s.Length > 0 && s != "." && s != "..")
-                .ToArray();
-            if (parts.Length == 0) throw new InvalidDataException("Nombre de archivo no válido");
-            var full = Path.GetFullPath(Path.Combine([root, .. parts]));
-            var rootFull = Path.GetFullPath(root).TrimEnd('\\') + "\\";
-            if (!full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Ruta fuera de la carpeta");
-            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-            full = Unique(full);
-            _open[h.Id] = (new FileStream(full, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 20), full);
-        }
-        catch (Exception ex)
-        {
-            ack(new FileAckInfo { Id = h.Id, Ok = false, Error = ex.Message });
-        }
-    }
-
-    private static string Unique(string path)
-    {
-        if (!File.Exists(path)) return path;
-        var dir = Path.GetDirectoryName(path)!;
-        var name = Path.GetFileNameWithoutExtension(path);
-        var ext = Path.GetExtension(path);
-        for (int i = 1; ; i++)
-        {
-            var p = Path.Combine(dir, $"{name} ({i}){ext}");
-            if (!File.Exists(p)) return p;
-        }
-    }
-
-    public void Chunk(int id, ReadOnlySpan<byte> data)
-    {
-        if (_open.TryGetValue(id, out var f)) f.Stream.Write(data);
-    }
-
-    public void End(int id)
-    {
-        if (!_open.Remove(id, out var f)) return;
-        f.Stream.Dispose();
-        ack(new FileAckInfo { Id = id, Ok = true, Path = f.Path });
-    }
-
-    public void Dispose()
-    {
-        foreach (var (stream, path) in _open.Values)
-        {
-            stream.Dispose();
-            try { File.Delete(path); } catch { }
-        }
-        _open.Clear();
-    }
-}

@@ -340,6 +340,7 @@ public sealed class HostService : IDisposable
             Machine = Environment.MachineName,
             Elevated = IsElevated,
             InternetId = _settings.InternetEnabled ? _settings.InternetId : null,
+            FileDownload = _settings.AllowFileDownload,
         });
         Interlocked.CompareExchange(ref _session, null, session);
         Log.Write($"Session ended: {session.ClientName}");

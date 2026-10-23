@@ -106,6 +106,11 @@ internal static unsafe partial class SessionInterop
         finally { CloseHandle(own); }
     }
 
+    /// <summary>Token of the user signed in to this process's session (caller must be SYSTEM); null when nobody is.</summary>
+    public static Microsoft.Win32.SafeHandles.SafeAccessTokenHandle? SessionUserToken() =>
+        WTSQueryUserToken((uint)Process.GetCurrentProcess().SessionId, out var token)
+            ? new Microsoft.Win32.SafeHandles.SafeAccessTokenHandle(token) : null;
+
     /// <summary>Starts <paramref name="exe"/> as the user logged on to <paramref name="sessionId"/> (caller must be SYSTEM).</summary>
     public static Process? LaunchAsSessionUser(uint sessionId, string exe, string args)
     {

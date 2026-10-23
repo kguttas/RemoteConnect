@@ -46,6 +46,7 @@ Instalarlo en el cliente es opcional.
 | Varios monitores | Selector de monitor. |
 | Portapapeles | Automático en ambos sentidos (texto e imágenes). |
 | Enviar archivos/carpetas | Arrástralos a la ventana o **Acciones → Enviar archivos…**. Llegan a `Descargas\RemoteConnect` del remoto (configurable). |
+| Recibir archivos/carpetas del remoto | **Acciones → Recibir archivos del remoto…**: explorador de las unidades y carpetas del remoto; selecciona (varios con Ctrl/Mayús) y **Descargar**, o doble clic en un archivo. Se guardan en `Descargas\RemoteConnect` de este equipo (**Cambiar…**). Se puede cancelar a medias (lo incompleto se borra). |
 | Audio | **Audio** (el sonido del remoto se oye en local). |
 | Ctrl+Alt+Supr (desbloquear, pantalla de seguridad) | **Acciones → Ctrl+Alt+Supr** (requiere el servicio instalado). |
 | Administrador de tareas remoto | **Acciones → Administrador de tareas**. |
@@ -116,12 +117,23 @@ Por componente (`--selftest`, 1920×1080):
 
 Sin cambios en pantalla no se envía vídeo (solo se refina la calidad unos instantes tras cada cambio).
 
+## Transferencia de archivos
+
+Va por un carril propio de baja prioridad (el mismo de los envíos), así que una descarga grande no frena el vídeo, el
+audio ni el ratón, y usa todo el ancho de banda que quede libre (~280 MB/s en local, ~18 Mbps en un enlace de 20 Mbps).
+
+**Seguridad.** Instalado como servicio, el host corre como SYSTEM, que podría leer los archivos de todos los usuarios.
+Por eso el explorador remoto y las descargas se hacen **suplantando al usuario que tiene la sesión iniciada** en el
+remoto: solo se ve lo que ese usuario puede abrir, y si no hay nadie con sesión iniciada no se sirve nada. El dueño del
+remoto puede desactivarlo en *Este equipo* → **Permitir que el cliente explore y descargue archivos de este equipo**.
+
 ## Limitaciones conocidas
 
 - **Pantalla de bloqueo / inicio de sesión / UAC** solo funcionan con RemoteConnect **instalado** (servicio). En modo
   portátil (`--host` sin instalar) el host corre como tu usuario y no puede ver esos escritorios seguros.
 - Se controla la sesión de **consola** (la del monitor físico), no sesiones RDP paralelas.
-- Sin transferencia remoto→local de archivos (usa el portapapeles para texto/imágenes) ni copiar/pegar archivos.
+- No hay copiar/pegar de archivos por el portapapeles (sí texto e imágenes): usa **Enviar archivos** / **Recibir archivos**.
+- Recibir archivos necesita RemoteConnect **2.1** o posterior en los dos equipos (con un host 2.0 la opción avisa y no hace nada).
 - AMD AMF y Media Foundation están soportados pero no probados en esta máquina (NVENC, Quick Sync y x264 sí).
 - En portátiles híbridos (pantalla en la GPU integrada, NVENC en la dedicada) la captura sin copia no es posible y el
   host usa la copia por CPU, como antes. HEVC por Quick Sync no admite cambios de bitrate en caliente: se reabre.
@@ -155,11 +167,12 @@ Otros modos: `--service` (lo usa el SCM), `--agent` (host como SYSTEM en la sesi
 
 Estructura (`src/RemoteConnect`):
 - `Core/` protocolo (marcos con 4 carriles de prioridad: control, audio, vídeo, archivos; sobre TLS o un flujo QUIC por
-  carril), descubrimiento, ajustes, seguridad, instalador, Opus (`AudioCodec.cs`), simulador de enlace (`SimLink.cs`);
+  carril), descubrimiento, ajustes, seguridad, instalador, recepción de archivos (`FileTransfer.cs`), Opus (`AudioCodec.cs`), simulador de enlace (`SimLink.cs`);
   `P2p.cs`: ID de Internet, STUN, hole punching, señalización ntfy cifrada, opciones QUIC.
 - `Host/` captura DXGI Desktop Duplication, codificador FFmpeg (NVENC → QSV → AMF → x264 → MF; entrada D3D11 sin copia
   cuando puede), control de congestión por retardo (`RateControl.cs`: acuses por fotograma, RTT base, cola estimada),
-  inyección de entrada (`SendInput` por scancode), audio WASAPI loopback, servidor y sesión.
+  inyección de entrada (`SendInput` por scancode), audio WASAPI loopback, servidor y sesión;
+  `FileServer.cs`: explorador y descargas remoto→local suplantando al usuario de la sesión.
 - `Client/` sesión con reconexión (candidatos LAN / DNS / Internet en paralelo, gana el primero), pipeline de vídeo
   (D3D11VA → shader YUV→RGB → swap chain flip en una ventana nativa `VideoHost`; solo se dibuja el último frame),
   audio, hook de teclado.
@@ -189,3 +202,7 @@ Notas técnicas que costó encontrar:
   `AssemblyLoadContext.ResolvingUnmanagedDll` (ni la precarga por nombre ni `SetDllImportResolver` sirven aquí).
 - Hole punching + QUIC: msquic no acepta un socket ya abierto, así que se hace STUN y el envío de paquetes con un
   socket UDP propio, se cierra y QUIC se enlaza al mismo puerto; el mapeo del NAT sigue vivo.
+
+## Licencia
+
+[MIT](LICENSE) © 2026 kguttas: puedes usarlo, copiarlo, modificarlo y redistribuirlo (también con fines comerciales) siempre que conserves el aviso de copyright y la licencia. Se ofrece sin garantía.

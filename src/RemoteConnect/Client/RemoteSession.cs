@@ -49,6 +49,8 @@ public sealed class RemoteSession : IAsyncDisposable
     private volatile Connection? _conn;
     private Task? _run;
     private int _nextFileId;
+    private FileReceiver? _downloads;
+    private long _downloadedBytes;
 
     public KnownHost Host { get; }
     public WelcomeInfo? Info { get; private set; }
@@ -72,6 +74,17 @@ public sealed class RemoteSession : IAsyncDisposable
     /// <summary>(sample rate, channels, codec, data)</summary>
     public event Action<int, int, AudioCodec, byte[]>? Audio;
     public event Action<FileAckInfo>? FileAck;
+    /// <summary>A folder listing of the host arrived (network thread).</summary>
+    public event Action<DirListingInfo>? DirListing;
+    /// <summary>A download started (totals), finished, failed or was cancelled (network thread).</summary>
+    public event Action<DownloadInfo>? DownloadState;
+    /// <summary>One downloaded file is complete on disk, or failed (network thread).</summary>
+    public event Action<FileAckInfo>? FileDownloaded;
+
+    /// <summary>Where downloads from the host are written.</summary>
+    public string DownloadFolder { get; set; } = Paths.DefaultReceiveFolder;
+    /// <summary>Bytes of the current download received so far.</summary>
+    public long DownloadedBytes => Interlocked.Read(ref _downloadedBytes);
     public event Action<string>? Notice;
     /// <summary>Raised when address / fingerprint / name of the host was learnt and should be persisted.</summary>
     public event Action<KnownHost>? HostUpdated;
@@ -462,6 +475,11 @@ public sealed class RemoteSession : IAsyncDisposable
                 linked.Cancel();
                 _conn = null;
                 await pinger;
+                if (Interlocked.Exchange(ref _downloads, null) is { } partial)
+                {
+                    partial.Abort();
+                    DownloadState?.Invoke(new DownloadInfo { State = DownloadInfo.Phase.Failed, Error = "Conexión perdida durante la descarga" });
+                }
             }
             return true;
         }
@@ -533,6 +551,24 @@ public sealed class RemoteSession : IAsyncDisposable
                     if (p.Length > 1) Clipboard?.Invoke((ClipboardKind)p.Span[0], p.Span[1..].ToArray());
                     break;
                 case Msg.FileAck: FileAck?.Invoke(ProtocolInfo.FromJson<FileAckInfo>(p.Span)); break;
+                case Msg.DirListing: DirListing?.Invoke(ProtocolInfo.FromJson<DirListingInfo>(p.Span)); break;
+                case Msg.FileBegin: _downloads?.Begin(ProtocolInfo.FromJson<FileHeader>(p.Span)); break;
+                case Msg.FileChunk:
+                {
+                    int id = r.I32();
+                    var data = r.Rest();
+                    if (_downloads is { } d) { d.Chunk(id, data); Interlocked.Add(ref _downloadedBytes, data.Length); }
+                    break;
+                }
+                case Msg.FileEnd: _downloads?.End(r.I32()); break;
+                case Msg.DownloadInfo:
+                {
+                    var info = ProtocolInfo.FromJson<DownloadInfo>(p.Span);
+                    if (info.State is DownloadInfo.Phase.Failed or DownloadInfo.Phase.Cancelled) Interlocked.Exchange(ref _downloads, null)?.Abort();
+                    else if (info.State == DownloadInfo.Phase.Finished) Interlocked.Exchange(ref _downloads, null)?.Dispose();
+                    DownloadState?.Invoke(info);
+                    break;
+                }
                 case Msg.Notice: Notice?.Invoke(p.Text); break;
                 case Msg.Welcome:
                     Info = ProtocolInfo.FromJson<WelcomeInfo>(p.Span);
@@ -562,6 +598,22 @@ public sealed class RemoteSession : IAsyncDisposable
         lock (_optLock) _options = o.Clone();
         _conn?.SendJson(Msg.Options, o);
     }
+
+    /// <summary>Asks the host for a folder listing ("" = its drives and the user's folders); see <see cref="DirListing"/>.</summary>
+    public void ListRemote(string path) => _conn?.SendJson(Msg.DirList, new DirRequest { Path = path });
+
+    /// <summary>Downloads files / folders of the host into <see cref="DownloadFolder"/>; see <see cref="DownloadState"/>.</summary>
+    public void Download(IEnumerable<string> remotePaths)
+    {
+        var conn = _conn ?? throw new IOException("No hay conexión");
+        Directory.CreateDirectory(DownloadFolder);
+        Interlocked.Exchange(ref _downloads, new FileReceiver(DownloadFolder, ack => FileDownloaded?.Invoke(ack)))?.Abort();
+        Interlocked.Exchange(ref _downloadedBytes, 0);
+        conn.SendJson(Msg.FileGet, new FileGetRequest { Paths = remotePaths.ToList() });
+    }
+
+    /// <summary>Stops the download; the host confirms with <see cref="DownloadInfo.Phase.Cancelled"/>.</summary>
+    public void CancelDownload() => _conn?.Send(Msg.FileCancel);
 
     /// <summary>Uploads files to the host's receive folder. Progress reports (name, bytesDone, bytesTotal).</summary>
     public async Task UploadAsync(IReadOnlyList<(string FullPath, string Relative)> files, IProgress<(string, long, long)> progress)

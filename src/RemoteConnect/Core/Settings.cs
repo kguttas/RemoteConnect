@@ -119,6 +119,8 @@ public sealed class HostSettings
     public bool KeepAwake { get; set; } = true;
     public bool AllowAudio { get; set; } = true;
     public bool AllowClipboard { get; set; } = true;
+    /// <summary>Let the client browse this machine's files and download them (as the signed-in user).</summary>
+    public bool AllowFileDownload { get; set; } = true;
     /// <summary>auto, h264_nvenc, h264_qsv, h264_amf, libx264, h264_mf. Names a vendor: NVENC / QSV / AMF also apply to HEVC and AV1.</summary>
     public string Encoder { get; set; } = "auto";
     /// <summary>Accept connections over the Internet (STUN + public signalling + QUIC hole punching).</summary>
@@ -201,6 +203,8 @@ public sealed class ClientSettings
     public StreamOptions Defaults { get; set; } = new();
     public bool FitToWindow { get; set; } = true;
     public bool CaptureSystemKeys { get; set; } = true;
+    /// <summary>Where files downloaded from remote machines go.</summary>
+    public string DownloadFolder { get; set; } = Paths.DefaultReceiveFolder;
     public string SignalServer { get; set; } = P2p.DefaultSignalServer;
 
     public static ClientSettings Load() => JsonFile.Load<ClientSettings>(Paths.ClientSettingsFile);

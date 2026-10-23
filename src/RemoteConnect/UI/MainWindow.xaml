@@ -189,6 +189,8 @@
                                 <CheckBox x:Name="KeepAwakeBox" Content="Impedir suspensión mientras hay una sesión" Click="OnHostOptionChanged" />
                                 <CheckBox x:Name="AudioBox" Content="Permitir enviar el audio" Click="OnHostOptionChanged" Margin="0,4,0,0" />
                                 <CheckBox x:Name="ClipboardBox" Content="Sincronizar portapapeles (texto e imágenes)" Click="OnHostOptionChanged" Margin="0,4,0,0" />
+                                <CheckBox x:Name="FileDownloadBox" Content="Permitir que el cliente explore y descargue archivos de este equipo" Click="OnHostOptionChanged" Margin="0,4,0,0"
+                                          ToolTip="Con el acceso de la cuenta que ha iniciado sesión en este equipo (nunca como SYSTEM)" />
                             </StackPanel>
                         </Grid>
                     </Border>

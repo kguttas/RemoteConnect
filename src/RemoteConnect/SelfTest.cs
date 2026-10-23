@@ -340,6 +340,47 @@ public static class SelfTest
         return cap.HasImage ? 0 : 1;
     }
 
+    /// <summary>Lists the remote top level and <paramref name="remotePath"/>, downloads it and compares the bytes.</summary>
+    private static async Task<int> DownloadTest(RemoteSession session, string remotePath)
+    {
+        if (session.Info?.FileDownload != true) { P("host does not offer downloads"); return 1; }
+        var listing = new TaskCompletionSource<DirListingInfo>();
+        session.DirListing += l => listing.TrySetResult(l);
+        session.ListRemote("");
+        var top = await listing.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        P($"top level: {string.Join(", ", top.Entries.Select(e => e.Name))}{(top.Error is null ? "" : " error " + top.Error)}");
+        listing = new TaskCompletionSource<DirListingInfo>();
+        session.ListRemote(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(remotePath)) ?? remotePath);
+        var dir = await listing.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        P($"listing {dir.Path}: {dir.Entries.Count} entries, parent '{dir.Parent}'{(dir.Error is null ? "" : " error " + dir.Error)}");
+
+        var dest = Path.Combine(Path.GetTempPath(), "rc-download-test-" + Environment.ProcessId);
+        session.DownloadFolder = dest;
+        var done = new TaskCompletionSource<DownloadInfo>();
+        int files = 0;
+        session.FileDownloaded += a => { if (a.Ok) Interlocked.Increment(ref files); else P("file error " + a.Error); };
+        session.DownloadState += d => { if (d.State == DownloadInfo.Phase.Started) P($"download started: {d.Files} files, {d.Bytes / 1e6:0.0} MB"); else done.TrySetResult(d); };
+        var sw = Stopwatch.StartNew();
+        session.Download([remotePath]);
+        var result = await done.Task.WaitAsync(TimeSpan.FromMinutes(5));
+        double secs = sw.Elapsed.TotalSeconds;
+        P($"download {result.State} in {secs:0.00} s: {files} files, {session.DownloadedBytes / 1e6:0.0} MB, {session.DownloadedBytes / 1e6 / secs:0.0} MB/s{(result.Error is null ? "" : " error " + result.Error)}");
+
+        // Compare every file with the original (host and client share this machine in the test).
+        var root = Path.GetFullPath(remotePath);
+        var originals = File.Exists(root) ? [root] : Directory.GetFiles(root, "*", SearchOption.AllDirectories);
+        var parent = Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(root))!;
+        int bad = 0;
+        foreach (var o in originals)
+        {
+            var copy = Path.Combine(dest, Path.GetRelativePath(parent, o));
+            if (!File.Exists(copy) || !File.ReadAllBytes(copy).AsSpan().SequenceEqual(File.ReadAllBytes(o))) { bad++; P("MISMATCH " + copy); }
+        }
+        P($"verified {originals.Length - bad}/{originals.Length} files identical");
+        try { Directory.Delete(dest, true); } catch { }
+        return result.State == DownloadInfo.Phase.Finished && bad == 0 && files == originals.Length ? 0 : 1;
+    }
+
     private static async Task<int> TestClient(string[] args)
     {
         var addr = args.Length > 1 ? args[1] : "127.0.0.1";
@@ -378,6 +419,12 @@ public static class SelfTest
         await Task.WhenAny(connected.Task, Task.Delay(host.InternetId is null ? 10000 : 40000));
         if (failure is not null || !session.IsConnected) { P("connect failed: " + (failure ?? "timeout")); await session.DisposeAsync(); return 1; }
         P($"connected via {(session.ViaInternet ? "Internet (QUIC)" : "LAN (TLS/TCP)")}");
+        if (args.SkipWhile(a => a != "--download").Skip(1).FirstOrDefault() is { } remotePath)
+        {
+            int rc = await DownloadTest(session, remotePath);
+            await session.DisposeAsync();
+            return rc;
+        }
 
         // Optional: an animated patch whose colour encodes a frame counter, read back from the decoded
         // stream to measure glass-to-decode latency (host and client on this machine).

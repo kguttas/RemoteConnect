@@ -199,6 +199,7 @@ public partial class MainWindow : Window
         KeepAwakeBox.IsChecked = _host.KeepAwake;
         AudioBox.IsChecked = _host.AllowAudio;
         ClipboardBox.IsChecked = _host.AllowClipboard;
+        FileDownloadBox.IsChecked = _host.AllowFileDownload;
         EncoderBox.SelectedItem = EncoderBox.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == _host.Encoder) ?? EncoderBox.Items[0];
         InternetToggle.IsChecked = _host.InternetEnabled;
         InternetToggle.Content = _host.InternetEnabled ? "Permitido por Internet" : "Solo red local";
@@ -251,6 +252,7 @@ public partial class MainWindow : Window
         _host.KeepAwake = KeepAwakeBox.IsChecked == true;
         _host.AllowAudio = AudioBox.IsChecked == true;
         _host.AllowClipboard = ClipboardBox.IsChecked == true;
+        _host.AllowFileDownload = FileDownloadBox.IsChecked == true;
         if (EncoderBox.SelectedItem is ComboBoxItem { Tag: string enc }) _host.Encoder = enc;
         SaveHost();
     }

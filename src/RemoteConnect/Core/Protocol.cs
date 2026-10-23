@@ -24,8 +24,11 @@ public enum Msg : byte
     Ping = 12,           // int64 timestamp (echoed back as Pong)
     Special = 13,        // byte SpecialAction
     FrameAck = 14,       // uint32 seq of a VideoFrame that arrived (the host paces and adapts its bitrate on these)
+    DirList = 15,        // json DirRequest: list a folder of the host ("" = drives and the user's folders)
+    FileGet = 16,        // json FileGetRequest: send these files / folders to the client
+    FileCancel = 17,     // stop the download in progress
 
-    // both directions
+    // both directions (uploads client → host, downloads host → client, always on the Bulk lane)
     Clipboard = 6,       // byte kind (1 text utf8, 2 png), data
     FileBegin = 7,       // json FileHeader
     FileChunk = 8,       // int32 id, data
@@ -42,6 +45,8 @@ public enum Msg : byte
     FileAck = 110,       // json FileAckInfo
     Notice = 111,        // utf8 text
     StreamStats = 112,   // int32 bitrate kbps, float encode ms, float queue ms, float base RTT ms
+    DirListing = 113,    // json DirListingInfo
+    DownloadInfo = 114,  // json DownloadInfo: a download starts (totals), ends, or failed
 }
 
 [Flags]
@@ -125,6 +130,8 @@ public sealed class WelcomeInfo
     public List<MonitorInfo> Monitors { get; set; } = new();
     public bool Elevated { get; set; }
     public string? InternetId { get; set; }
+    /// <summary>The host serves its files (DirList / FileGet). Hosts before 2.1 leave it false.</summary>
+    public bool FileDownload { get; set; }
 }
 
 public sealed class VideoFormatInfo
@@ -145,6 +152,44 @@ public sealed class FileHeader
     public int Id { get; set; }
     public string RelativePath { get; set; } = "";
     public long Size { get; set; }
+}
+
+public sealed class DirRequest
+{
+    public string Path { get; set; } = "";
+}
+
+public sealed class RemoteEntry
+{
+    public string Name { get; set; } = "";
+    public string Path { get; set; } = "";
+    public bool IsDir { get; set; }
+    public long Size { get; set; }
+    public DateTime Modified { get; set; }
+}
+
+public sealed class DirListingInfo
+{
+    /// <summary>"" for the top level (drives and the user's folders).</summary>
+    public string Path { get; set; } = "";
+    /// <summary>Folder one level up, "" for a drive root, null at the top level.</summary>
+    public string? Parent { get; set; }
+    public List<RemoteEntry> Entries { get; set; } = new();
+    public string? Error { get; set; }
+}
+
+public sealed class FileGetRequest
+{
+    public List<string> Paths { get; set; } = new();
+}
+
+public sealed class DownloadInfo
+{
+    public enum Phase { Started, Finished, Failed, Cancelled }
+    public Phase State { get; set; }
+    public int Files { get; set; }
+    public long Bytes { get; set; }
+    public string? Error { get; set; }
 }
 
 public sealed class FileAckInfo
