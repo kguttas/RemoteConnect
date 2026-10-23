@@ -170,7 +170,7 @@ public static class SelfTest
         UI.RemoteWindow? w = null;
         await ui.InvokeAsync(() =>
         {
-            w = new UI.RemoteWindow(session, new ClientSettings { CaptureSystemKeys = false });
+            w = new UI.RemoteWindow(session, new ClientSettings { CaptureSystemKeys = false }) { Topmost = true }; // topmost: screenshots of the test
             w.Show();
         });
         var sw = Stopwatch.StartNew();
@@ -366,6 +366,30 @@ public static class SelfTest
         return cap.HasImage ? 0 : 1;
     }
 
+    /// <summary>Queries the remote display, re-applies its current mode and scale (no visible change), restores.</summary>
+    private static async Task<int> DisplayTest(RemoteSession session)
+    {
+        if (session.Info?.DisplayControl != true) { P("host does not offer display control"); return 1; }
+        var answers = new System.Collections.Concurrent.BlockingCollection<DisplayInfo>();
+        session.DisplayInfo += answers.Add;
+        DisplayInfo Next() => answers.TryTake(out var i, 10000) ? i : throw new TimeoutException("no DisplayInfo");
+        string Show(DisplayInfo i) => $"{i.Width}x{i.Height} at {i.Scale} % (recommended {i.RecommendedScale} %, scales {string.Join("/", i.Scales)}), " +
+            $"{i.Modes.Count} modes [{string.Join(", ", i.Modes.Take(6))}…], changed={i.Changed}{(i.Error is null ? "" : " error: " + i.Error)}";
+        session.QueryDisplay();
+        var first = await Task.Run(Next);
+        P("display: " + Show(first));
+        session.SetDisplay(first.Width, first.Height, first.Scale);
+        var applied = await Task.Run(Next);
+        P("after set: " + Show(applied));
+        session.RestoreDisplay();
+        var restored = await Task.Run(Next);
+        P("after restore: " + Show(restored));
+        bool ok = first.Modes.Count > 0 && first.Scale > 0 && applied.Error is null && applied.Changed && !restored.Changed
+                  && restored.Width == first.Width && restored.Scale == first.Scale;
+        P($"display control {(ok ? "OK" : "FAILED")}");
+        return ok ? 0 : 1;
+    }
+
     /// <summary>Lists the remote top level and <paramref name="remotePath"/>, downloads it and compares the bytes.</summary>
     private static async Task<int> DownloadTest(RemoteSession session, string remotePath)
     {
@@ -446,6 +470,12 @@ public static class SelfTest
         await Task.WhenAny(connected.Task, Task.Delay(host.InternetId is null ? 10000 : 40000));
         if (failure is not null || !session.IsConnected) { P("connect failed: " + (failure ?? "timeout")); await session.DisposeAsync(); return 1; }
         P($"connected via {(session.ViaInternet ? "Internet (QUIC)" : "LAN (TLS/TCP)")}");
+        if (args.Contains("--display"))
+        {
+            int rc = await DisplayTest(session);
+            await session.DisposeAsync();
+            return rc;
+        }
         if (args.SkipWhile(a => a != "--download").Skip(1).FirstOrDefault() is { } remotePath)
         {
             int rc = await DownloadTest(session, remotePath);

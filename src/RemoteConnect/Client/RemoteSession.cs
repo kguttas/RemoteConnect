@@ -76,6 +76,8 @@ public sealed class RemoteSession : IAsyncDisposable
     public event Action<FileAckInfo>? FileAck;
     /// <summary>A folder listing of the host arrived (network thread).</summary>
     public event Action<DirListingInfo>? DirListing;
+    /// <summary>The remote monitor's resolution / scale and the choices (network thread).</summary>
+    public event Action<DisplayInfo>? DisplayInfo;
     /// <summary>A download started (totals), finished, failed or was cancelled (network thread).</summary>
     public event Action<DownloadInfo>? DownloadState;
     /// <summary>One downloaded file is complete on disk, or failed (network thread).</summary>
@@ -552,6 +554,7 @@ public sealed class RemoteSession : IAsyncDisposable
                     break;
                 case Msg.FileAck: FileAck?.Invoke(ProtocolInfo.FromJson<FileAckInfo>(p.Span)); break;
                 case Msg.DirListing: DirListing?.Invoke(ProtocolInfo.FromJson<DirListingInfo>(p.Span)); break;
+                case Msg.DisplayInfo: DisplayInfo?.Invoke(ProtocolInfo.FromJson<DisplayInfo>(p.Span)); break;
                 case Msg.FileBegin: _downloads?.Begin(ProtocolInfo.FromJson<FileHeader>(p.Span)); break;
                 case Msg.FileChunk:
                 {
@@ -601,6 +604,14 @@ public sealed class RemoteSession : IAsyncDisposable
 
     /// <summary>Asks the host for a folder listing ("" = its drives and the user's folders); see <see cref="DirListing"/>.</summary>
     public void ListRemote(string path) => _conn?.SendJson(Msg.DirList, new DirRequest { Path = path });
+
+    /// <summary>Asks for the streamed monitor's resolution and scale (answer: <see cref="DisplayInfo"/>).</summary>
+    public void QueryDisplay() => _conn?.Send(Msg.DisplayQuery, ReadOnlySpan<byte>.Empty);
+
+    /// <summary>Changes the remote monitor for this session (0 = keep); it goes back when the session ends.</summary>
+    public void SetDisplay(int width, int height, int scale) => _conn?.SendJson(Msg.DisplaySet, new DisplayRequest { Width = width, Height = height, Scale = scale });
+
+    public void RestoreDisplay() => _conn?.SendJson(Msg.DisplaySet, new DisplayRequest { Restore = true });
 
     /// <summary>Downloads files / folders of the host into <see cref="DownloadFolder"/>; see <see cref="DownloadState"/>.</summary>
     public void Download(IEnumerable<string> remotePaths)

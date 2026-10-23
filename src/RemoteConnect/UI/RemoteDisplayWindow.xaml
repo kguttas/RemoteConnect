@@ -1,0 +1,39 @@
+<Window x:Class="RemoteConnect.UI.RemoteDisplayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pantalla del equipo remoto" Width="460" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False" Icon="/Assets/app.ico">
+    <StackPanel Margin="18">
+        <TextBlock Text="Cambia la resolución y la escala de la pantalla remota mientras estás conectado. Útil en pantallas pequeñas de mucha densidad (consolas portátiles, tablets)."
+                   TextWrapping="Wrap" Opacity="0.8" />
+        <TextBlock x:Name="CurrentText" Margin="0,12,0,0" FontWeight="SemiBold" TextWrapping="Wrap" Text="Consultando la pantalla remota…" />
+
+        <Grid Margin="0,14,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Text="Resolución" VerticalAlignment="Center" Margin="0,0,12,0" />
+            <ComboBox x:Name="ModeBox" Grid.Column="1" IsEnabled="False" />
+            <TextBlock Grid.Row="1" Text="Escala" VerticalAlignment="Center" Margin="0,8,12,0" />
+            <ComboBox x:Name="ScaleBox" Grid.Row="1" Grid.Column="1" Margin="0,8,0,0" IsEnabled="False" />
+        </Grid>
+
+        <Button x:Name="FitButton" Content="Ajustar a esta ventana" Margin="0,10,0,0" HorizontalAlignment="Left" Click="OnFit" IsEnabled="False"
+                ToolTip="Elige la resolución que mejor llena la ventana sin reducir la imagen, con escala 100 %" />
+
+        <TextBlock x:Name="StatusText" Margin="0,12,0,0" TextWrapping="Wrap" Opacity="0.8"
+                   Text="Los cambios se deshacen solos al desconectar." />
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button x:Name="RestoreButton" Content="Restaurar original" Click="OnRestore" IsEnabled="False" Margin="0,0,8,0" />
+            <Button x:Name="ApplyButton" Content="Aplicar" Click="OnApply" IsEnabled="False" MinWidth="90" Margin="0,0,8,0"
+                    Style="{DynamicResource AccentButtonStyle}" />
+            <Button Content="Cerrar" Click="OnClose" MinWidth="80" IsCancel="True" />
+        </StackPanel>
+    </StackPanel>
+</Window>

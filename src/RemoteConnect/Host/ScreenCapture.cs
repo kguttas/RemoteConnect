@@ -44,6 +44,14 @@ public sealed unsafe class ScreenCapture : IDisposable
     public int Rotation => _rotation;
     private int _rotation;
     private int _srcW, _srcH; // native (unrotated) size of the captured image
+    private bool _sizeChecked;
+    private readonly string _learnKey;
+    /// <summary>
+    /// Image sizes seen on earlier captures, by monitor + mode. What DXGI reports (mode, desktop rectangle) does not
+    /// always match the image it hands out — handhelds with portrait panels and scaling are the usual suspects —
+    /// so the first frame is the ground truth; a capture opened with the wrong size is reopened with this one.
+    /// </summary>
+    private static readonly Dictionary<string, (int W, int H, int Rotation)> Learned = new();
     public int Stride { get; }
     public MonitorInfo Monitor { get; }
     public byte* Buffer { get; }
@@ -159,11 +167,24 @@ public sealed unsafe class ScreenCapture : IDisposable
         _desktopFormat = desc.Format;
         _rotation = dupDesc.Rotation switch { ModeRotation.Rotate90 => 1, ModeRotation.Rotate180 => 2, ModeRotation.Rotate270 => 3, _ => 0 };
         // Testing aid: pretend the display is rotated (REMOTECONNECT_FORCEROTATE=90 / 180 / 270).
-        bool forced = int.TryParse(Environment.GetEnvironmentVariable("REMOTECONNECT_FORCEROTATE"), out int forceDeg) && forceDeg % 90 == 0;
+        // A trailing "!" reports the rotation the way a real rotated display does (image size guessed from the desktop).
+        var forceText = Environment.GetEnvironmentVariable("REMOTECONNECT_FORCEROTATE") ?? "";
+        bool asReal = forceText.EndsWith('!');
+        bool forced = int.TryParse(forceText.TrimEnd('!'), out int forceDeg) && forceDeg % 90 == 0;
         if (forced) _rotation = forceDeg / 90 % 4;
+        if (asReal) forced = false;
         // Encoders and the capture thread share this device; FFmpeg may touch it from its own threads.
         using (var mt = _device.QueryInterfaceOrNull<ID3D11Multithread>()) mt?.SetMultithreadProtected(true);
-        if (_rotation == 0 || forced)
+        _learnKey = $"{Monitor.Name}|{Monitor.Width}x{Monitor.Height}|{desc.Width}x{desc.Height}|{_rotation}";
+        bool learned;
+        (int W, int H, int Rotation) seen;
+        lock (Learned) learned = Learned.TryGetValue(_learnKey, out seen);
+        if (learned)
+        {
+            (_srcW, _srcH, _rotation) = seen;
+            _sizeChecked = true;
+        }
+        else if (_rotation == 0 || forced)
         {
             _srcW = (int)desc.Width;
             _srcH = (int)desc.Height;
@@ -177,7 +198,8 @@ public sealed unsafe class ScreenCapture : IDisposable
         bool swap = (_rotation & 1) != 0;
         Width = swap ? _srcH : _srcW;
         Height = swap ? _srcW : _srcH;
-        if (_rotation != 0) Log.Write($"Display rotated {_rotation * 90}°{(forced ? " (forced)" : "")}: captured {_srcW}x{_srcH}, streamed {Width}x{Height}");
+        Log.Write($"Capture {Monitor.Name}: desktop {Monitor.Width}x{Monitor.Height}, mode {desc.Width}x{desc.Height}, rotation {dupDesc.Rotation}" +
+                  $"{(forced ? " (forced)" : "")}{(learned ? " (size from an earlier frame)" : "")} → image {_srcW}x{_srcH}, streamed {Width}x{Height}");
         Stride = Width * 4;
         Buffer = (byte*)NativeMemory.AlignedAlloc((nuint)(Stride * Height), 64);
     }
@@ -209,6 +231,21 @@ public sealed unsafe class ScreenCapture : IDisposable
             if (frameInfo.LastPresentTime != 0 || !HasImage)
             {
                 using var tex = resource.QueryInterface<ID3D11Texture2D>();
+                if (!_sizeChecked)
+                {
+                    _sizeChecked = true;
+                    var td = tex.Description;
+                    if (td.Width != _srcW || td.Height != _srcH)
+                    {
+                        // Wrong guess: remember the real size and have the session reopen capture and encoder with it.
+                        int rot = _rotation;
+                        // An odd rotation whose image already has the desktop's shape comes the right way up.
+                        if ((rot & 1) != 0 && td.Width == Monitor.Width && td.Height == Monitor.Height) rot = 0;
+                        lock (Learned) Learned[_learnKey] = ((int)td.Width, (int)td.Height, rot);
+                        Log.Write($"Captured image is {td.Width}x{td.Height}, expected {_srcW}x{_srcH}: reopening (rotation {rot * 90}°)");
+                        return CaptureResult.Lost;
+                    }
+                }
                 if (GpuMode)
                 {
                     if (_gpuLast is null)
@@ -228,13 +265,6 @@ public sealed unsafe class ScreenCapture : IDisposable
                 else if (_staging is null)
                 {
                     var d = tex.Description;
-                    if (_rotation != 0 && (d.Width != _srcW || d.Height != _srcH))
-                    {
-                        // Not the size we derived from the desktop rectangle: trust the texture.
-                        Log.Write($"Captured image is {d.Width}x{d.Height}, expected {_srcW}x{_srcH}");
-                        if (d.Width == Width && d.Height == Height) _rotation = 0; // already the right way up
-                        _srcW = (int)d.Width; _srcH = (int)d.Height;
-                    }
                     d.Usage = ResourceUsage.Staging;
                     d.BindFlags = BindFlags.None;
                     d.CPUAccessFlags = CpuAccessFlags.Read;

@@ -25,6 +25,8 @@ public sealed class HostSession
     private readonly Lock _optLock = new();
     private StreamOptions _opts;
     private volatile bool _reconfigure;
+    /// <summary>Display query / change for the capture thread (it is on the input desktop); a bare query is a null Request.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentQueue<DisplayRequest?> _displayRequests = new();
     private volatile bool _bitrateChanged;
     private volatile bool _forceKey = true;
     private volatile MonitorInfo? _monitor;
@@ -196,6 +198,12 @@ public sealed class HostSession
             case Msg.FileCancel:
                 _fileServer.Cancel();
                 break;
+            case Msg.DisplayQuery:
+                _displayRequests.Enqueue(null);
+                break;
+            case Msg.DisplaySet:
+                _displayRequests.Enqueue(ProtocolInfo.FromJson<DisplayRequest>(p.Span));
+                break;
         }
     }
 
@@ -321,6 +329,8 @@ public sealed class HostSession
     {
         // Desktop Duplication only sees the desktop this thread is on: follow lock screen / sign-in / UAC.
         using var desktop = new SessionInterop.InputDesktopFollower();
+        using var display = new DisplayControl(); // restores resolution / scale when the session ends
+        DisplayControl.RestorePending();
         double lastDesktopCheck = 0;
         Native.timeBeginPeriod(1);
         if (_settings.KeepAwake) Native.SetThreadExecutionState(Native.ES_CONTINUOUS | Native.ES_SYSTEM_REQUIRED | Native.ES_DISPLAY_REQUIRED);
@@ -338,6 +348,25 @@ public sealed class HostSession
             {
                 StreamOptions o;
                 lock (_optLock) o = _opts;
+                while (_displayRequests.TryDequeue(out var req))
+                {
+                    var monitors = ScreenCapture.EnumerateMonitors();
+                    if (monitors.Count == 0) continue;
+                    string device = monitors[Math.Clamp(o.MonitorIndex, 0, monitors.Count - 1)].Name;
+                    string? error = null;
+                    if (req is { Restore: true }) display.Restore();
+                    else if (req is not null) error = display.Apply(device, req.Width, req.Height, req.Scale);
+                    if (req is not null)
+                    {
+                        // New size: reopen capture and encoder (the client gets a new VideoFormat).
+                        enc?.Dispose(); enc = null;
+                        cap?.Dispose(); cap = null;
+                        Thread.Sleep(300); // let the mode change settle before duplicating the output again
+                    }
+                    var info = display.Query(device);
+                    info.Error ??= error;
+                    _conn.SendJson(Msg.DisplayInfo, info);
+                }
                 if (_reconfigure)
                 {
                     _reconfigure = false;

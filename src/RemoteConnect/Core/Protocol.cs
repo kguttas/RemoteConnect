@@ -27,6 +27,8 @@ public enum Msg : byte
     DirList = 15,        // json DirRequest: list a folder of the host ("" = drives and the user's folders)
     FileGet = 16,        // json FileGetRequest: send these files / folders to the client
     FileCancel = 17,     // stop the download in progress
+    DisplayQuery = 18,   // ask for the streamed monitor's resolutions and scales (answered with DisplayInfo)
+    DisplaySet = 19,     // json DisplayRequest: change resolution / scale for this session, or restore
 
     // both directions (uploads client → host, downloads host → client, always on the Bulk lane)
     Clipboard = 6,       // byte kind (1 text utf8, 2 png), data
@@ -47,6 +49,7 @@ public enum Msg : byte
     StreamStats = 112,   // int32 bitrate kbps, float encode ms, float queue ms, float base RTT ms
     DirListing = 113,    // json DirListingInfo
     DownloadInfo = 114,  // json DownloadInfo: a download starts (totals), ends, or failed
+    DisplayInfo = 115,   // json DisplayInfo
 }
 
 [Flags]
@@ -132,6 +135,45 @@ public sealed class WelcomeInfo
     public string? InternetId { get; set; }
     /// <summary>The host serves its files (DirList / FileGet). Hosts before 2.1 leave it false.</summary>
     public bool FileDownload { get; set; }
+    /// <summary>The host can change its resolution / scale for the session (DisplayQuery / DisplaySet). Since 2.3.</summary>
+    public bool DisplayControl { get; set; }
+}
+
+public sealed class DisplayMode
+{
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public override string ToString() => $"{Width} × {Height}";
+}
+
+/// <summary>Resolution and Windows scale of the streamed monitor, and what can be chosen.</summary>
+public sealed class DisplayInfo
+{
+    public string Device { get; set; } = "";
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public List<DisplayMode> Modes { get; set; } = new();
+    /// <summary>Percent; 0 = unknown.</summary>
+    public int Scale { get; set; }
+    public int RecommendedScale { get; set; }
+    public List<int> Scales { get; set; } = new();
+    /// <summary>Changed by this session (restored when it ends); the Original* fields say to what.</summary>
+    public bool Changed { get; set; }
+    public int OriginalWidth { get; set; }
+    public int OriginalHeight { get; set; }
+    public int OriginalScale { get; set; }
+    public string? Error { get; set; }
+}
+
+public sealed class DisplayRequest
+{
+    /// <summary>0 = keep the current resolution.</summary>
+    public int Width { get; set; }
+    public int Height { get; set; }
+    /// <summary>Percent; 0 = keep.</summary>
+    public int Scale { get; set; }
+    /// <summary>Put everything back the way it was before the session (Width / Height / Scale ignored).</summary>
+    public bool Restore { get; set; }
 }
 
 public sealed class VideoFormatInfo

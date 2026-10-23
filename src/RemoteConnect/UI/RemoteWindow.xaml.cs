@@ -410,6 +410,22 @@ public partial class RemoteWindow : Window
     }
 
     private RemoteFilesWindow? _filesWindow;
+    private RemoteDisplayWindow? _displayWindow;
+
+    private void OnRemoteDisplay(object sender, RoutedEventArgs e)
+    {
+        if (!_session.IsConnected) { ShowToast("No hay conexión.", 3); return; }
+        if (_session.Info?.DisplayControl != true)
+        {
+            ShowToast("El equipo remoto necesita RemoteConnect 2.3 o posterior para cambiar su resolución y escala.", 8);
+            return;
+        }
+        if (_displayWindow is { IsLoaded: true }) { _displayWindow.Activate(); return; }
+        _displayWindow = new RemoteDisplayWindow(_session, () => (_session.Host.ViewRotation & 1) != 0
+            ? (Video.PixelHeight, Video.PixelWidth) : (Video.PixelWidth, Video.PixelHeight)) { Owner = this };
+        _displayWindow.Closed += (_, _) => _displayWindow = null;
+        _displayWindow.Show();
+    }
 
     private void OnReceiveFiles(object sender, RoutedEventArgs e)
     {
