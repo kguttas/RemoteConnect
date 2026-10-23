@@ -128,5 +128,10 @@ public sealed unsafe class InputInjector : IDisposable
             if ((_buttonsDown & (1 << b)) != 0) DoButton((MouseButtonId)b, false);
     }
 
-    private static void Send(INPUT input) => SendInput(1, &input, sizeof(INPUT));
+    private static void Send(INPUT input)
+    {
+        if (input.type == INPUT_KEYBOARD) input.ki.dwExtraInfo = RemoteConnectInputTag;
+        else input.mi.dwExtraInfo = RemoteConnectInputTag;
+        SendInput(1, &input, sizeof(INPUT));
+    }
 }

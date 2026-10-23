@@ -589,7 +589,14 @@ public sealed class RemoteSession : IAsyncDisposable
     public void MouseMove(float x, float y) => _conn?.Send(Msg.MouseMove, new PacketWriter().F32(x).F32(y));
     public void MouseButton(MouseButtonId b, bool down) => _conn?.Send(Msg.MouseButton, new PacketWriter().U8((byte)b).U8((byte)(down ? 1 : 0)));
     public void MouseWheel(int delta, bool horizontal) => _conn?.Send(Msg.MouseWheel, new PacketWriter().I16((short)delta).U8((byte)(horizontal ? 1 : 0)));
-    public void Key(ushort vk, ushort scan, KeyFlags flags) => _conn?.Send(Msg.Key, new PacketWriter().U16(vk).U16(scan).U8((byte)flags));
+    public void Key(ushort vk, ushort scan, KeyFlags flags)
+    {
+        KeySent?.Invoke(vk, scan, flags);
+        _conn?.Send(Msg.Key, new PacketWriter().U16(vk).U16(scan).U8((byte)flags));
+    }
+
+    /// <summary>For the self-test: every key sent to the host.</summary>
+    internal event Action<ushort, ushort, KeyFlags>? KeySent;
     public void Special(SpecialAction a) => _conn?.Send(Msg.Special, new PacketWriter().U8((byte)a));
     public void RequestKeyframe() => _conn?.Send(Msg.RequestKeyframe);
 

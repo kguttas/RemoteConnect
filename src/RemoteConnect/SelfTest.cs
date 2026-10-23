@@ -164,15 +164,16 @@ public static class SelfTest
     }
 
     /// <summary>The real client window (native video child, swap chain, layout) against a host, resized midway.</summary>
-    private static async Task<int> WindowTest(RemoteSession session, int secs)
+    private static async Task<int> WindowTest(RemoteSession session, int secs, bool hookTest = false)
     {
         var ui = System.Windows.Application.Current.Dispatcher;
         UI.RemoteWindow? w = null;
         await ui.InvokeAsync(() =>
         {
-            w = new UI.RemoteWindow(session, new ClientSettings { CaptureSystemKeys = false }) { Topmost = true }; // topmost: screenshots of the test
+            w = new UI.RemoteWindow(session, new ClientSettings { CaptureSystemKeys = hookTest }) { Topmost = true }; // topmost: screenshots of the test
             w.Show();
         });
+        if (hookTest) return await HookTest(session, w!);
         var sw = Stopwatch.StartNew();
         bool resized = false;
         int shownBefore = 0;
@@ -366,6 +367,144 @@ public static class SelfTest
         return cap.HasImage ? 0 : 1;
     }
 
+    [DllImport("user32.dll")] private static extern uint MapVirtualKeyW(uint code, uint type);
+
+    /// <summary>
+    /// The client's keyboard hook: keys typed on this PC while the remote window is in front (simulated with
+    /// SendInput, like a remapper would) must reach the session with their scan codes, and Ctrl+Alt+Enter must stay
+    /// local (full screen) without its Enter going to the remote. Keys are only typed while the window is in front.
+    /// </summary>
+    private static async Task<int> HookTest(RemoteSession session, UI.RemoteWindow w)
+    {
+        var ui = System.Windows.Application.Current.Dispatcher;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<(ushort Vk, ushort Scan, KeyFlags Flags)>();
+        session.KeySent += (vk, scan, f) => sent.Enqueue((vk, scan, f));
+        for (int i = 0; i < 100 && !session.IsConnected; i++) await Task.Delay(100);
+        await Task.Delay(1500);
+        nint hwnd = await ui.InvokeAsync(() => { w.Activate(); ForceForeground(w.Handle); return w.Handle; });
+        await Task.Delay(300);
+        bool Front() => Native.GetForegroundWindow() == hwnd;
+        if (!Front()) { P("hook: could not take the foreground, test skipped"); await ui.InvokeAsync(w.Close); return 0; }
+        unsafe bool Type(ushort vk, bool down)
+        {
+            if (!Front()) return false;
+            var input = new Native.INPUT { type = Native.INPUT_KEYBOARD };
+            input.ki.wVk = vk;
+            input.ki.wScan = (ushort)MapVirtualKeyW(vk, 0);
+            if (!down) input.ki.dwFlags = Native.KEYEVENTF_KEYUP;
+            Native.SendInput(1, &input, sizeof(Native.INPUT));
+            return true;
+        }
+        async Task<bool> Seq(params (ushort Vk, bool Down)[] keys)
+        {
+            foreach (var (vk, down) in keys) { if (!Type(vk, down)) return false; await Task.Delay(20); }
+            await Task.Delay(200);
+            return true;
+        }
+        int failures = 0;
+        void Expect(string name, bool ok) { P($"hook {name}: {(ok ? "OK" : "FAIL")}"); if (!ok) failures++; }
+
+        const ushort LShift = 0xA0, LCtrl = 0xA2, LAlt = 0xA4, A = 0x41, Enter = 0x0D;
+        if (!await Seq((LShift, true), (A, true), (A, false), (LShift, false))) { P("hook: lost the foreground"); return 0; }
+        var got = sent.ToArray(); sent.Clear();
+        P("hook Shift+A sent: " + string.Join(" ", got.Select(k => $"{k.Vk:X2}/{k.Scan:X2}{(k.Flags.HasFlag(KeyFlags.Down) ? "↓" : "↑")}")));
+        Expect("Shift+A forwarded with scan codes", got.Length == 4 && got[0] is (LShift, 0x2A, KeyFlags.Down) && got[1] is (A, 0x1E, KeyFlags.Down)
+            && got[2] is (A, 0x1E, 0) && got[3] is (LShift, 0x2A, 0));
+
+        bool before = await ui.InvokeAsync(() => w.IsFullScreen);
+        if (!await Seq((LCtrl, true), (LAlt, true), (Enter, true), (Enter, false), (LAlt, false), (LCtrl, false))) { P("hook: lost the foreground"); return 0; }
+        await Task.Delay(300);
+        bool after = await ui.InvokeAsync(() => w.IsFullScreen);
+        got = sent.ToArray(); sent.Clear();
+        Expect("Ctrl+Alt+Enter toggles full screen locally", after != before);
+        Expect("…and its Enter is not sent to the remote", !got.Any(k => k.Vk == Enter));
+        await Task.Delay(300);
+        hwnd = await ui.InvokeAsync(() => w.Handle);
+        await Seq((LCtrl, true), (LAlt, true), (Enter, true), (Enter, false), (LAlt, false), (LCtrl, false)); // back to a window
+        await Task.Delay(300);
+        Expect("second Ctrl+Alt+Enter leaves full screen", await ui.InvokeAsync(() => w.IsFullScreen) == before);
+        await ui.InvokeAsync(w.Close);
+        await Task.Delay(1500);
+        P($"keyboard hook {(failures == 0 ? "OK" : "FAILED")}");
+        return failures == 0 ? 0 : 1;
+    }
+    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint hwnd);
+    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
+    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint from, uint to, bool attach);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+
+    /// <summary>Foreground lock workaround: share input state with the current foreground thread for the call.</summary>
+    private static void ForceForeground(nint hwnd)
+    {
+        uint fg = GetWindowThreadProcessId(Native.GetForegroundWindow(), out _), me = GetCurrentThreadId();
+        bool attached = fg != me && AttachThreadInput(me, fg, true);
+        SetForegroundWindow(hwnd);
+        if (attached) AttachThreadInput(me, fg, false);
+    }
+
+    /// <summary>
+    /// Key combinations end to end: the host (this machine) types into a text box of this process. Each key is sent
+    /// only while the box's window is in the foreground, so nothing can land in another window.
+    /// </summary>
+    private static async Task<int> KeysTest(RemoteSession session)
+    {
+        var ui = System.Windows.Application.Current.Dispatcher;
+        System.Windows.Controls.TextBox? box = null;
+        nint hwnd = 0;
+        await ui.InvokeAsync(() =>
+        {
+            box = new System.Windows.Controls.TextBox { FontSize = 20 };
+            var w = new System.Windows.Window { Title = "RemoteConnect key test", Width = 400, Height = 120, Topmost = true, Content = box, Left = 200, Top = 200 };
+            w.Show();
+            hwnd = new System.Windows.Interop.WindowInteropHelper(w).Handle;
+            w.Activate();
+            ForceForeground(hwnd);
+            box.Focus();
+        });
+        await Task.Delay(500);
+        bool Foreground() => Native.GetForegroundWindow() == hwnd;
+        if (!Foreground()) { P("keys: could not take the foreground, test skipped"); return 0; }
+
+        // As the client's keyboard hook sends them: virtual key + scan code.
+        async Task<bool> K(ushort vk, bool down, bool scanCodes = true)
+        {
+            if (!Foreground()) return false;
+            ushort scan = scanCodes ? (ushort)MapVirtualKeyW(vk, 0) : (ushort)0;
+            session.Key(vk, scan, down ? KeyFlags.Down : 0);
+            await Task.Delay(15);
+            return true;
+        }
+        async Task<bool> Tap(ushort vk, bool scanCodes = true) => await K(vk, true, scanCodes) && await K(vk, false, scanCodes);
+        async Task<bool> Combo(ushort mod, ushort vk, bool scanCodes = true) =>
+            await K(mod, true, scanCodes) && await Tap(vk, scanCodes) && await K(mod, false, scanCodes);
+        async Task<string> Text() { await Task.Delay(150); return await ui.InvokeAsync(() => box!.Text); }
+
+        const ushort Shift = 0x10, Ctrl = 0x11, LCtrl = 0xA2, LShift = 0xA0;
+        var results = new List<(string Name, bool Ok)>();
+        bool aborted = false;
+        async Task Check(string name, Func<Task<bool>> keys, string expected)
+        {
+            if (aborted) return;
+            if (!await keys()) { aborted = true; P("keys: lost the foreground, stopping"); return; }
+            var t = await Text();
+            results.Add((name, t == expected));
+            P($"keys {name}: \"{t}\" (expected \"{expected}\") {(t == expected ? "OK" : "FAIL")}");
+        }
+        await Check("letters", async () => await Tap(0x41) && await Tap(0x42), "ab");
+        await Check("Shift+C", () => Combo(Shift, 0x43), "abC");
+        await Check("Ctrl+A then x", async () => await Combo(Ctrl, 0x41) && await Tap(0x58), "x");
+        await Check("Ctrl+Z", () => Combo(Ctrl, 0x5A), "abC");
+        await Check("Ctrl+Backspace", () => Combo(Ctrl, 0x08), "");
+        // The WPF fallback path (system keys not captured) sends left/right virtual keys without scan codes.
+        await Check("vk-only LShift+D", () => Combo(LShift, 0x44, false), "D");
+        await Check("vk-only LCtrl+A then e", async () => await Combo(LCtrl, 0x41, false) && await Tap(0x45, false), "e");
+        session.Special(SpecialAction.ReleaseAllKeys);
+        await ui.InvokeAsync(() => System.Windows.Window.GetWindow(box!)!.Close());
+        bool ok = !aborted && results.All(r => r.Ok);
+        P($"key combinations {(aborted ? "ABORTED" : ok ? "OK" : "FAILED")}");
+        return aborted ? 0 : ok ? 0 : 1;
+    }
+
     /// <summary>Queries the remote display, re-applies its current mode and scale (no visible change), restores.</summary>
     private static async Task<int> DisplayTest(RemoteSession session)
     {
@@ -455,7 +594,7 @@ public static class SelfTest
         var audioCodec = AudioCodec.Pcm16;
         var connected = new TaskCompletionSource();
         using var pipeline = new VideoPipeline(session.RequestKeyframe, windowed: false);
-        if (args.Contains("--window")) return await WindowTest(session, secs);
+        if (args.Contains("--window")) return await WindowTest(session, secs, args.Contains("--hooktest"));
         session.StateChanged += (s, t) =>
         {
             P($"state {s} {t.Replace('\n', ' ')}");
@@ -470,6 +609,12 @@ public static class SelfTest
         await Task.WhenAny(connected.Task, Task.Delay(host.InternetId is null ? 10000 : 40000));
         if (failure is not null || !session.IsConnected) { P("connect failed: " + (failure ?? "timeout")); await session.DisposeAsync(); return 1; }
         P($"connected via {(session.ViaInternet ? "Internet (QUIC)" : "LAN (TLS/TCP)")}");
+        if (args.Contains("--keys"))
+        {
+            int rc = await KeysTest(session);
+            await session.DisposeAsync();
+            return rc;
+        }
         if (args.Contains("--display"))
         {
             int rc = await DisplayTest(session);

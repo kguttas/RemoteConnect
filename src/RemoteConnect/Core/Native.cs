@@ -51,6 +51,8 @@ internal static unsafe partial class Native
     public const int WH_KEYBOARD_LL = 13;
     public const int WM_KEYDOWN = 0x0100, WM_KEYUP = 0x0101, WM_SYSKEYDOWN = 0x0104, WM_SYSKEYUP = 0x0105;
     public const uint LLKHF_EXTENDED = 0x01, LLKHF_INJECTED = 0x10, LLKHF_UP = 0x80;
+    /// <summary>dwExtraInfo of the input the host injects, so a client on the same PC never sends it back.</summary>
+    public const nint RemoteConnectInputTag = 0x52434E54; // "RCNT"
 
     [StructLayout(LayoutKind.Sequential)]
     public struct KBDLLHOOKSTRUCT

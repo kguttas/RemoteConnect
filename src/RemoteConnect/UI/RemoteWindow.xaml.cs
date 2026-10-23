@@ -19,7 +19,9 @@ public partial class RemoteWindow : Window
     private readonly VideoPipeline _video;
     private readonly AudioPlayer _audio = new();
     private readonly DispatcherTimer _statsTimer;
-    private readonly HashSet<(ushort, ushort, KeyFlags)> _keysDown = new();
+    private readonly HashSet<(ushort, ushort, KeyFlags)> _keysDown = new(); // lock: the hook thread adds to it
+    /// <summary>Overlay up (connecting, password…): keys stay local. Read by the keyboard hook's thread.</summary>
+    private volatile bool _overlayShown = true;
     private KeyboardHook? _hook;
     private ClipboardBridge? _clipboard;
     private nint _hwnd;
@@ -104,6 +106,8 @@ public partial class RemoteWindow : Window
 
     /// <summary>For the self-test.</summary>
     internal (int Shown, string Decoder, string Stats) Diagnostics() => (_video.FramesShown, _video.DecoderInfo, Stats.Text);
+    internal bool IsFullScreen => _fullScreen;
+    internal nint Handle => _hwnd;
 
     private volatile bool _audioEnabled = true;
     private bool AudioEnabled => _audioEnabled;
@@ -120,7 +124,13 @@ public partial class RemoteWindow : Window
             Enabled = KeysToggle.IsChecked == true,
             KeyEvent = OnHookKey,
             ToggleFullScreen = () => Dispatcher.BeginInvoke(ToggleFullScreen),
-            ReleaseGrab = () => Dispatcher.BeginInvoke(() => { KeysToggle.IsChecked = false; OnKeysChanged(this, new RoutedEventArgs()); ShowToast("Teclado liberado. Vuelve a activar «Teclas Win» para capturarlo.", 4); }),
+            ReleaseGrab = () => Dispatcher.BeginInvoke(() =>
+            {
+                KeysToggle.IsChecked = false;
+                OnKeysChanged(this, new RoutedEventArgs());
+                ReleaseAllInput(); // Ctrl and Alt of the shortcut went to the remote: let go of them there
+                ShowToast("Teclado liberado. Vuelve a activar «Teclas Win» para capturarlo.", 4);
+            }),
         };
         try
         {
@@ -157,6 +167,7 @@ public partial class RemoteWindow : Window
         {
             case SessionState.Connected:
                 Overlay.Visibility = Visibility.Collapsed;
+                _overlayShown = false;
                 Video.Visibility = Visibility.Visible;
                 Title = $"{_session.Host.Name} — RemoteConnect";
                 break;
@@ -180,6 +191,7 @@ public partial class RemoteWindow : Window
         // WPF can't draw over the native video window: hide it while the overlay is up.
         Video.Visibility = Visibility.Hidden;
         Overlay.Visibility = Visibility.Visible;
+        _overlayShown = true;
         OverlayText.Text = text;
         Spinner.Visibility = spinner ? Visibility.Visible : Visibility.Collapsed;
         PasswordPanel.Visibility = password ? Visibility.Visible : Visibility.Collapsed;
@@ -253,6 +265,9 @@ public partial class RemoteWindow : Window
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern nint LoadCursorW(nint instance, nint name);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint MapVirtualKeyW(uint code, uint type);
 
     private void UpdateStats()
     {
@@ -562,10 +577,10 @@ public partial class RemoteWindow : Window
         return 0;
     }
 
-    /// <summary>Low-level hook path (system keys captured).</summary>
+    /// <summary>Low-level hook path (system keys captured). Runs on the hook's thread.</summary>
     private bool OnHookKey(ushort vk, ushort scan, KeyFlags flags)
     {
-        if (!_session.IsConnected || Overlay.Visibility == Visibility.Visible) return false;
+        if (!_session.IsConnected || _overlayShown) return false;
         SendKey(vk, scan, flags);
         return true;
     }
@@ -573,28 +588,36 @@ public partial class RemoteWindow : Window
     /// <summary>WPF path (system keys not captured): virtual keys only.</summary>
     private void OnWpfKey(object sender, KeyEventArgs e)
     {
-        if (_hook?.Enabled == true || !_session.IsConnected || Overlay.Visibility == Visibility.Visible) return;
+        if (_hook?.Active == true || !_session.IsConnected || _overlayShown) return;
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key == Key.ImeProcessed) key = e.ImeProcessedKey;
         int vk = KeyInterop.VirtualKeyFromKey(key);
         if (vk == 0) return;
-        bool ext = key is Key.RightCtrl or Key.RightAlt or Key.Insert or Key.Delete or Key.Home or Key.End or Key.PageUp
-            or Key.PageDown or Key.Left or Key.Right or Key.Up or Key.Down or Key.NumLock or Key.Divide or Key.PrintScreen;
-        SendKey((ushort)vk, 0, (e.IsDown ? KeyFlags.Down : 0) | (ext ? KeyFlags.Extended : 0));
+        // Scan codes too (as the hook path), so games and layout-sensitive apps on the remote behave the same.
+        uint sc = MapVirtualKeyW((uint)vk, 4 /* MAPVK_VK_TO_VSC_EX: E0 prefix for extended keys */);
+        bool ext = (sc & 0xFF00) == 0xE000 || key is Key.RightCtrl or Key.RightAlt or Key.Insert or Key.Delete or Key.Home or Key.End
+            or Key.PageUp or Key.PageDown or Key.Left or Key.Right or Key.Up or Key.Down or Key.NumLock or Key.Divide or Key.PrintScreen;
+        SendKey((ushort)vk, (ushort)(sc & 0xFF), (e.IsDown ? KeyFlags.Down : 0) | (ext ? KeyFlags.Extended : 0));
         e.Handled = true;
     }
 
     private void SendKey(ushort vk, ushort scan, KeyFlags flags)
     {
         var id = (vk, scan, flags & KeyFlags.Extended);
-        if (flags.HasFlag(KeyFlags.Down)) _keysDown.Add(id); else _keysDown.Remove(id);
-        _session.Key(vk, scan, flags);
+        lock (_keysDown)
+        {
+            if (flags.HasFlag(KeyFlags.Down)) _keysDown.Add(id); else _keysDown.Remove(id);
+            _session.Key(vk, scan, flags); // in the lock: a release-all can't slip between the two
+        }
     }
 
     private void ReleaseAllInput()
     {
-        foreach (var (vk, scan, ext) in _keysDown.ToList()) _session.Key(vk, scan, ext);
-        _keysDown.Clear();
+        lock (_keysDown)
+        {
+            foreach (var (vk, scan, ext) in _keysDown) _session.Key(vk, scan, ext);
+            _keysDown.Clear();
+        }
         ReleaseButtons();
         if (_session.IsConnected) _session.Special(SpecialAction.ReleaseAllKeys);
     }
